@@ -30,7 +30,16 @@
       "favicon": "./assets/images/favicon.png"
     },
     "plugins": [
-      "expo-router"
+      "expo-router",
+      "expo-secure-store",
+      [
+        "expo-image-picker",
+        { "photosPermission": "允许访问相册以添加图片到随想" }
+      ],
+      [
+        "expo-location",
+        { "locationWhenInUsePermission": "允许获取位置以标记随想地点" }
+      ]
     ],
     "experiments": {
       "typedRoutes": true
