@@ -39,6 +39,16 @@
       [
         "expo-location",
         { "locationWhenInUsePermission": "允许获取位置以标记随想地点" }
+      ],
+      [
+        "expo-share-intent",
+        {
+          "iosActivationRules": {
+            "NSExtensionActivationSupportsText": true,
+            "NSExtensionActivationSupportsWebURLWithMaxCount": 1
+          },
+          "androidIntentFilters": ["text/*"]
+        }
       ]
     ],
     "experiments": {

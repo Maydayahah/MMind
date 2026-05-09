@@ -1,7 +1,8 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Ionicons } from '@expo/vector-icons';
 import { useFonts } from 'expo-font';
-import { Stack } from 'expo-router';
+import { router, Stack } from 'expo-router';
+import { useShareIntent } from 'expo-share-intent';
 import * as SplashScreen from 'expo-splash-screen';
 import { useEffect } from 'react';
 import 'react-native-reanimated';
@@ -13,6 +14,22 @@ const queryClient = new QueryClient({
     queries: { retry: 1, staleTime: 30_000 },
   },
 });
+
+// 捕获系统分享到 MMind 的内容，跳转到写随想页并预填文字
+function ShareIntentHandler() {
+  const { hasShareIntent, shareIntent, resetShareIntent } = useShareIntent();
+
+  useEffect(() => {
+    if (!hasShareIntent) return;
+    const text = shareIntent?.text?.trim() ?? shareIntent?.webUrl?.trim() ?? '';
+    resetShareIntent();
+    if (text) {
+      router.push({ pathname: '/(tabs)/write', params: { text } });
+    }
+  }, [hasShareIntent]);
+
+  return null;
+}
 
 export default function RootLayout() {
   const [loaded, error] = useFonts({
@@ -31,6 +48,7 @@ export default function RootLayout() {
 
   return (
     <QueryClientProvider client={queryClient}>
+      <ShareIntentHandler />
       <Stack>
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
         <Stack.Screen

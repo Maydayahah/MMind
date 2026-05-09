@@ -1,9 +1,10 @@
 import { api, useStore, VOICE_PLACEHOLDER } from '@/hooks/useApi';
 import { Ionicons } from '@expo/vector-icons';
 import { Audio } from 'expo-av';
+import * as Clipboard from 'expo-clipboard';
 import * as ImagePicker from 'expo-image-picker';
 import * as Location from 'expo-location';
-import { router } from 'expo-router';
+import { router, useLocalSearchParams } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
 import {
   Alert,
@@ -30,6 +31,7 @@ type WriteMode = 'text' | 'voice';
 
 export default function WriteScreen() {
   const [mode, setMode] = useState<WriteMode>('text');
+  const { text: sharedText } = useLocalSearchParams<{ text?: string }>();
 
   return (
     <SafeAreaView style={styles.safeArea}>
@@ -51,15 +53,16 @@ export default function WriteScreen() {
         </TouchableOpacity>
       </View>
 
-      {mode === 'text' ? <TextModeScreen /> : <VoiceModeScreen />}
+      {mode === 'text' ? <TextModeScreen sharedText={sharedText} /> : <VoiceModeScreen />}
     </SafeAreaView>
   );
 }
 
 // ── 文字模式 ──────────────────────────────────────────────────────────────────
 
-function TextModeScreen() {
+function TextModeScreen({ sharedText }: { sharedText?: string }) {
   const [content, setContent] = useState('');
+  const [clipboardBanner, setClipboardBanner] = useState<string | null>(null);
   const [images, setImages] = useState<string[]>([]);
   const [location, setLocation] = useState<LocationData | null>(null);
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
@@ -70,6 +73,28 @@ function TextModeScreen() {
   const { addThought } = useStore();
   const pulseAnim = useRef(new Animated.Value(1)).current;
   const pulseLoop = useRef<Animated.CompositeAnimation | null>(null);
+
+  // 处理来自分享扩展的内容
+  useEffect(() => {
+    if (sharedText?.trim()) {
+      setContent(sharedText.trim());
+      setClipboardBanner(null);
+    }
+  }, [sharedText]);
+
+  // 检测剪贴板（仅在没有分享内容时）
+  useEffect(() => {
+    if (sharedText?.trim()) return;
+    Clipboard.getStringAsync().then((text) => {
+      if (text?.trim()) setClipboardBanner(text.trim());
+    });
+  }, []);
+
+  function importClipboard() {
+    if (!clipboardBanner) return;
+    setContent((prev) => prev.trim() ? `${prev.trim()}\n\n${clipboardBanner}` : clipboardBanner);
+    setClipboardBanner(null);
+  }
 
   useEffect(() => {
     if (isRecording) {
@@ -170,6 +195,21 @@ function TextModeScreen() {
         <Text style={styles.count}>{content.length} 字</Text>
       </View>
       <ScrollView style={styles.scroll} keyboardShouldPersistTaps="handled">
+        {/* 剪贴板 / 分享内容导入提示 */}
+        {clipboardBanner && (
+          <View style={styles.clipboardBanner}>
+            <Ionicons name="clipboard-outline" size={14} color="#534AB7" />
+            <Text style={styles.clipboardPreview} numberOfLines={1}>
+              {clipboardBanner}
+            </Text>
+            <TouchableOpacity onPress={importClipboard} style={styles.clipboardImportBtn}>
+              <Text style={styles.clipboardImportText}>导入</Text>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={() => setClipboardBanner(null)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+              <Ionicons name="close" size={14} color="#aaa" />
+            </TouchableOpacity>
+          </View>
+        )}
         <TextInput
           style={styles.input}
           multiline autoFocus
@@ -401,6 +441,26 @@ const styles = StyleSheet.create({
   title: { fontSize: 18, fontWeight: '700', color: '#1a1a1a' },
   count: { fontSize: 13, color: '#aaa' },
   scroll: { flex: 1 },
+  clipboardBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginHorizontal: 16,
+    marginTop: 8,
+    marginBottom: 4,
+    backgroundColor: '#EEEDFE',
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+  },
+  clipboardPreview: { flex: 1, fontSize: 12, color: '#534AB7' },
+  clipboardImportBtn: {
+    backgroundColor: '#534AB7',
+    borderRadius: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+  },
+  clipboardImportText: { fontSize: 12, color: '#fff', fontWeight: '600' },
   input: { minHeight: 160, paddingHorizontal: 16, paddingTop: 4, fontSize: 15, color: '#1a1a1a', lineHeight: 24 },
   imageRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, paddingHorizontal: 16, paddingBottom: 10 },
   imageThumb: { position: 'relative', width: 80, height: 80 },
