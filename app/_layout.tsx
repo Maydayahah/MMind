@@ -1,11 +1,12 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Ionicons } from '@expo/vector-icons';
 import { useFonts } from 'expo-font';
-import { router, Stack } from 'expo-router';
-import { useShareIntent } from 'expo-share-intent';
+import { router, Stack, useSegments } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import 'react-native-reanimated';
+
+import { initAuth, useAuthStore } from '@/hooks/useApi';
 
 SplashScreen.preventAutoHideAsync();
 
@@ -15,41 +16,45 @@ const queryClient = new QueryClient({
   },
 });
 
-// 捕获系统分享到 MMind 的内容，跳转到写随想页并预填文字
-function ShareIntentHandler() {
-  const { hasShareIntent, shareIntent, resetShareIntent } = useShareIntent();
+function AuthGuard() {
+  const { isAuthenticated } = useAuthStore();
+  const segments = useSegments();
 
   useEffect(() => {
-    if (!hasShareIntent) return;
-    const text = shareIntent?.text?.trim() ?? shareIntent?.webUrl?.trim() ?? '';
-    resetShareIntent();
-    if (text) {
-      router.push({ pathname: '/(tabs)/write', params: { text } });
+    const inAuth = segments[0] === '(auth)';
+    if (!isAuthenticated && !inAuth) {
+      router.replace('/(auth)/login');
+    } else if (isAuthenticated && inAuth) {
+      router.replace('/(tabs)');
     }
-  }, [hasShareIntent]);
+  }, [isAuthenticated, segments]);
 
   return null;
 }
 
 export default function RootLayout() {
-  const [loaded, error] = useFonts({
-    ...Ionicons.font,
-  });
+  const [authReady, setAuthReady] = useState(false);
+  const [loaded, error] = useFonts({ ...Ionicons.font });
 
   useEffect(() => {
     if (error) throw error;
   }, [error]);
 
   useEffect(() => {
-    if (loaded) SplashScreen.hideAsync();
+    if (!loaded) return;
+    initAuth().finally(() => {
+      setAuthReady(true);
+      SplashScreen.hideAsync();
+    });
   }, [loaded]);
 
-  if (!loaded) return null;
+  if (!loaded || !authReady) return null;
 
   return (
     <QueryClientProvider client={queryClient}>
-      <ShareIntentHandler />
+      <AuthGuard />
       <Stack>
+        <Stack.Screen name="(auth)" options={{ headerShown: false }} />
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
         <Stack.Screen
           name="collection/[id]"

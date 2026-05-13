@@ -1,10 +1,11 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import axios from 'axios';
+import * as SecureStore from 'expo-secure-store';
 import { create } from 'zustand';
 import { createJSONStorage, persist } from 'zustand/middleware';
 
 // 修改为你电脑的局域网 IP（运行 ipconfig 查看）
-export const API_BASE = 'http://10.238.8.62:8001';
+export const API_BASE = 'http://10.238.8.62:8003';
 
 export const api = axios.create({ baseURL: API_BASE, timeout: 30000 });
 
@@ -50,6 +51,63 @@ interface Store {
   updateCollection: (c: Collection) => void;
   removeCollection: (id: number) => void;
 }
+
+// ── Auth store（不持久化，依赖 SecureStore） ─────────────────────────────────
+
+interface AuthStore {
+  isAuthenticated: boolean;
+  userId: number | null;
+  username: string | null;
+  setAuth: (userId: number, username: string) => void;
+  clearAuth: () => void;
+}
+
+export const useAuthStore = create<AuthStore>()((set) => ({
+  isAuthenticated: false,
+  userId: null,
+  username: null,
+  setAuth: (userId, username) => set({ isAuthenticated: true, userId, username }),
+  clearAuth: () => set({ isAuthenticated: false, userId: null, username: null }),
+}));
+
+function decodeToken(token: string): { sub: string; username: string; exp: number } {
+  const payload = token.split('.')[1];
+  return JSON.parse(atob(payload));
+}
+
+export async function initAuth(): Promise<boolean> {
+  try {
+    const token = await SecureStore.getItemAsync('auth_token');
+    if (!token) return false;
+    const payload = decodeToken(token);
+    if (payload.exp * 1000 < Date.now()) {
+      await SecureStore.deleteItemAsync('auth_token');
+      return false;
+    }
+    api.defaults.headers.common['Authorization'] = `Bearer ${token}`;
+    useAuthStore.getState().setAuth(parseInt(payload.sub), payload.username);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export async function saveAuthToken(token: string) {
+  await SecureStore.setItemAsync('auth_token', token);
+  const payload = decodeToken(token);
+  api.defaults.headers.common['Authorization'] = `Bearer ${token}`;
+  useAuthStore.getState().setAuth(parseInt(payload.sub), payload.username);
+}
+
+export async function logout() {
+  await SecureStore.deleteItemAsync('auth_token');
+  delete api.defaults.headers.common['Authorization'];
+  useAuthStore.getState().clearAuth();
+  useStore.getState().setThoughts([]);
+  useStore.getState().setCollections([]);
+}
+
+// ── Data store ───────────────────────────────────────────────────────────────
 
 export const useStore = create<Store>()(
   persist(

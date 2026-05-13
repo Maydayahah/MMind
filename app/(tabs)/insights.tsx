@@ -1,10 +1,14 @@
-import { api, Stats } from '@/hooks/useApi';
+import { api, logout, Stats, useAuthStore } from '@/hooks/useApi';
+import { Ionicons } from '@expo/vector-icons';
+import { router } from 'expo-router';
 import { useQuery } from '@tanstack/react-query';
 import {
   ActivityIndicator,
+  Alert,
   ScrollView,
   StyleSheet,
   Text,
+  TouchableOpacity,
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -17,6 +21,7 @@ const THEMES: { key: string; label: string; color: string }[] = [
 ];
 
 export default function InsightsScreen() {
+  const { username } = useAuthStore();
   const { data: stats, isLoading, isError } = useQuery<Stats>({
     queryKey: ['stats'],
     queryFn: async () => {
@@ -25,10 +30,30 @@ export default function InsightsScreen() {
     },
   });
 
+  function handleLogout() {
+    Alert.alert('退出登录', '确认退出当前账号？', [
+      { text: '取消', style: 'cancel' },
+      {
+        text: '退出',
+        style: 'destructive',
+        onPress: async () => {
+          await logout();
+          router.replace('/(auth)/login');
+        },
+      },
+    ]);
+  }
+
   return (
     <SafeAreaView style={styles.safeArea}>
       <ScrollView style={styles.scroll} showsVerticalScrollIndicator={false}>
-        <Text style={styles.title}>洞察</Text>
+        <View style={styles.titleRow}>
+          <Text style={styles.title}>洞察</Text>
+          <TouchableOpacity style={styles.userBtn} onPress={handleLogout} activeOpacity={0.7}>
+            <Ionicons name="person-circle-outline" size={18} color="#534AB7" />
+            <Text style={styles.userText}>{username}</Text>
+          </TouchableOpacity>
+        </View>
 
         {isLoading && <ActivityIndicator color="#534AB7" style={{ marginTop: 40 }} />}
 
@@ -93,7 +118,10 @@ function StatCard({ label, value }: { label: string; value: string }) {
 const styles = StyleSheet.create({
   safeArea: { flex: 1, backgroundColor: '#FAFAF9' },
   scroll: { flex: 1, paddingHorizontal: 16 },
-  title: { fontSize: 20, fontWeight: '700', color: '#1a1a1a', paddingVertical: 12 },
+  titleRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 12 },
+  title: { fontSize: 20, fontWeight: '700', color: '#1a1a1a' },
+  userBtn: { flexDirection: 'row', alignItems: 'center', gap: 5, backgroundColor: '#EEEDFE', borderRadius: 20, paddingHorizontal: 10, paddingVertical: 5 },
+  userText: { fontSize: 13, color: '#534AB7' },
   statRow: { flexDirection: 'row', gap: 10, marginBottom: 16 },
   statCard: {
     flex: 1,

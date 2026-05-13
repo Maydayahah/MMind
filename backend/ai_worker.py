@@ -4,14 +4,14 @@ import json
 from openai import OpenAI
 from database import get_db
 
-client = OpenAI(
-    api_key=os.environ["DEEPSEEK_API_KEY"],
-    base_url="https://api.deepseek.com"
-)
 MODEL = "deepseek-chat"
 
 
 def ask_ai(prompt: str) -> str:
+    client = OpenAI(
+        api_key=os.environ.get("DEEPSEEK_API_KEY", ""),
+        base_url="https://api.deepseek.com",
+    )
     response = client.chat.completions.create(
         model=MODEL,
         max_tokens=2048,
@@ -20,21 +20,24 @@ def ask_ai(prompt: str) -> str:
     return response.choices[0].message.content
 
 
-def organize_thoughts(thought_ids: list[int] | None = None):
+def organize_thoughts(thought_ids: list[int] | None = None, user_id: int | None = None):
     conn = get_db()
 
     if thought_ids:
         placeholders = ",".join("?" * len(thought_ids))
+        uid_clause = " AND user_id=?" if user_id is not None else ""
+        params = (*thought_ids, user_id) if user_id is not None else thought_ids
         thoughts = conn.execute(
-            f"SELECT * FROM thoughts WHERE id IN ({placeholders}) ORDER BY created_at ASC",
-            thought_ids,
+            f"SELECT * FROM thoughts WHERE id IN ({placeholders}){uid_clause} ORDER BY created_at ASC",
+            params,
         ).fetchall()
     else:
-        thoughts = conn.execute("""
-            SELECT * FROM thoughts
-            WHERE created_at >= datetime('now', '-7 days')
-            ORDER BY created_at ASC
-        """).fetchall()
+        uid_clause = "AND user_id=?" if user_id is not None else ""
+        params = (user_id,) if user_id is not None else ()
+        thoughts = conn.execute(
+            f"SELECT * FROM thoughts WHERE created_at >= datetime('now', '-7 days') {uid_clause} ORDER BY created_at ASC",
+            params,
+        ).fetchall()
 
     if len(thoughts) < 3:
         print(f"[AI] 随想数量 {len(thoughts)} < 3，跳过整理")
@@ -74,8 +77,8 @@ def organize_thoughts(thought_ids: list[int] | None = None):
         content = ask_ai(collection_prompt)
         ids_str = ",".join(str(t["id"]) for t in thoughts)
         conn.execute(
-            "INSERT INTO collections (title, theme, content, thought_ids, period) VALUES (?, ?, ?, ?, ?)",
-            (f"{theme} · 随想录", theme, content, ids_str, period)
+            "INSERT INTO collections (user_id, title, theme, content, thought_ids, period) VALUES (?, ?, ?, ?, ?, ?)",
+            (user_id, f"{theme} · 随想录", theme, content, ids_str, period)
         )
         conn.commit()
 

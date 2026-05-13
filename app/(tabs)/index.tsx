@@ -13,17 +13,23 @@ import {
   Image,
   Platform,
   RefreshControl,
+  ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   TouchableOpacity,
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+const PRESET_TAGS = ['创作与灵感', '生活观察', '技术思考', '阅读笔记'];
+
 export default function StreamScreen() {
   const { thoughts, setThoughts, removeThoughts } = useStore();
   const [selectMode, setSelectMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  const [query, setQuery] = useState('');
+  const [activeTag, setActiveTag] = useState<string | null>(null);
 
   const { refetch, isRefetching } = useQuery({
     queryKey: ['thoughts'],
@@ -42,7 +48,23 @@ export default function StreamScreen() {
     return dayjs(date).format('M月D日');
   };
 
-  const grouped = thoughts.reduce((acc, t) => {
+  // 过滤逻辑：搜索 + 标签 AND 组合
+  const filtered = thoughts.filter((t) => {
+    const q = query.trim().toLowerCase();
+    const matchQuery = !q || t.content.toLowerCase().includes(q);
+    const matchTag = !activeTag || t.tags.split(',').includes(activeTag);
+    return matchQuery && matchTag;
+  });
+
+  // 历史上的今天：同月同日、往年的随想
+  const todayMMDD = dayjs().format('MM-DD');
+  const currentYear = dayjs().year();
+  const onThisDay = thoughts.filter((t) => {
+    const d = dayjs(t.created_at);
+    return d.format('MM-DD') === todayMMDD && d.year() < currentYear;
+  });
+
+  const grouped = filtered.reduce((acc, t) => {
     const date = dayjs(t.created_at).format('YYYY-MM-DD');
     if (!acc[date]) acc[date] = [];
     acc[date].push(t);
@@ -181,6 +203,52 @@ export default function StreamScreen() {
         </View>
       )}
 
+      {/* 搜索栏 + 标签筛选（选择模式时隐藏） */}
+      {!selectMode && (
+        <>
+          <View style={styles.searchBar}>
+            <Ionicons name="search-outline" size={16} color="#aaa" />
+            <TextInput
+              style={styles.searchInput}
+              placeholder="搜索随想内容…"
+              placeholderTextColor="#C0BDB5"
+              value={query}
+              onChangeText={setQuery}
+              returnKeyType="search"
+              clearButtonMode="while-editing"
+            />
+            {query.length > 0 && (
+              <TouchableOpacity onPress={() => setQuery('')} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                <Ionicons name="close-circle" size={16} color="#C0BDB5" />
+              </TouchableOpacity>
+            )}
+          </View>
+
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            style={styles.tagFilterScroll}
+            contentContainerStyle={styles.tagFilterContent}
+          >
+            <TouchableOpacity
+              style={[styles.filterChip, !activeTag && styles.filterChipActive]}
+              onPress={() => setActiveTag(null)}
+            >
+              <Text style={[styles.filterChipText, !activeTag && styles.filterChipTextActive]}>全部</Text>
+            </TouchableOpacity>
+            {PRESET_TAGS.map((tag) => (
+              <TouchableOpacity
+                key={tag}
+                style={[styles.filterChip, activeTag === tag && styles.filterChipActive]}
+                onPress={() => setActiveTag((prev) => (prev === tag ? null : tag))}
+              >
+                <Text style={[styles.filterChipText, activeTag === tag && styles.filterChipTextActive]}>{tag}</Text>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+        </>
+      )}
+
       <FlatList
         style={styles.list}
         data={sections}
@@ -189,6 +257,11 @@ export default function StreamScreen() {
           !selectMode ? (
             <RefreshControl refreshing={isRefetching} onRefresh={refetch} tintColor="#534AB7" colors={['#534AB7']} />
           ) : undefined
+        }
+        ListHeaderComponent={
+          !selectMode && !query && !activeTag && onThisDay.length > 0 ? (
+            <OnThisDayCard thoughts={onThisDay} />
+          ) : null
         }
         renderItem={({ item: [date, items] }) => (
           <View>
@@ -208,8 +281,8 @@ export default function StreamScreen() {
         ListEmptyComponent={
           <View style={styles.emptyContainer}>
             <Ionicons name="leaf-outline" size={40} color="#D0CFC8" />
-            <Text style={styles.emptyText}>还没有随想</Text>
-            <Text style={styles.emptyHint}>点击右上角「记录」开始记录</Text>
+            <Text style={styles.emptyText}>{query || activeTag ? '没有匹配的随想' : '还没有随想'}</Text>
+            <Text style={styles.emptyHint}>{query || activeTag ? '换个关键词或标签试试' : '点击右上角「记录」开始记录'}</Text>
           </View>
         }
       />
@@ -232,6 +305,43 @@ export default function StreamScreen() {
         </View>
       )}
     </SafeAreaView>
+  );
+}
+
+// ── 历史上的今天 ───────────────────────────────────────────────────────────────
+
+function OnThisDayCard({ thoughts }: { thoughts: Thought[] }) {
+  const byYear = thoughts.reduce((acc, t) => {
+    const y = dayjs(t.created_at).year();
+    if (!acc[y]) acc[y] = [];
+    acc[y].push(t);
+    return acc;
+  }, {} as Record<number, Thought[]>);
+
+  const years = Object.keys(byYear).map(Number).sort((a, b) => b - a);
+
+  return (
+    <View style={styles.onThisDay}>
+      <View style={styles.onThisDayHeader}>
+        <Ionicons name="calendar-outline" size={14} color="#534AB7" />
+        <Text style={styles.onThisDayTitle}>历史上的今天</Text>
+      </View>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 10 }}>
+        {years.map((year) =>
+          byYear[year].slice(0, 2).map((t) => (
+            <TouchableOpacity
+              key={t.id}
+              style={styles.onThisDayCard}
+              onPress={() => router.push(`/thought/${t.id}`)}
+              activeOpacity={0.8}
+            >
+              <Text style={styles.onThisDayYear}>{year} 年</Text>
+              <Text style={styles.onThisDayContent} numberOfLines={3}>{t.content}</Text>
+            </TouchableOpacity>
+          ))
+        )}
+      </ScrollView>
+    </View>
   );
 }
 
@@ -465,4 +575,50 @@ const styles = StyleSheet.create({
   actionBtn: { alignItems: 'center', gap: 4, flex: 1 },
   actionBtnDelete: {},
   actionBtnText: { fontSize: 12, color: '#534AB7' },
+  // 搜索栏
+  searchBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginHorizontal: 16,
+    marginBottom: 10,
+    backgroundColor: '#F0EFF8',
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+  },
+  searchInput: { flex: 1, fontSize: 14, color: '#1a1a1a', padding: 0 },
+  // 标签筛选
+  tagFilterScroll: { flexGrow: 0, marginBottom: 4 },
+  tagFilterContent: { paddingHorizontal: 16, gap: 8, paddingBottom: 6 },
+  filterChip: {
+    borderRadius: 20,
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+    backgroundColor: '#F0EFF8',
+    borderWidth: 1,
+    borderColor: '#E0DEF0',
+  },
+  filterChipActive: { backgroundColor: '#534AB7', borderColor: '#534AB7' },
+  filterChipText: { fontSize: 13, color: '#666' },
+  filterChipTextActive: { color: '#fff', fontWeight: '600' },
+  // 历史上的今天
+  onThisDay: {
+    marginBottom: 12,
+    backgroundColor: '#EEEDFE',
+    borderRadius: 14,
+    padding: 14,
+  },
+  onThisDayHeader: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 10 },
+  onThisDayTitle: { fontSize: 13, fontWeight: '600', color: '#534AB7' },
+  onThisDayCard: {
+    width: 180,
+    backgroundColor: '#fff',
+    borderRadius: 10,
+    padding: 12,
+    borderLeftWidth: 3,
+    borderLeftColor: '#534AB7',
+  },
+  onThisDayYear: { fontSize: 11, color: '#534AB7', fontWeight: '600', marginBottom: 4 },
+  onThisDayContent: { fontSize: 13, color: '#333', lineHeight: 19 },
 });

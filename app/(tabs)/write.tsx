@@ -1,7 +1,9 @@
 import { api, useStore, VOICE_PLACEHOLDER } from '@/hooks/useApi';
 import { Ionicons } from '@expo/vector-icons';
 import { Audio } from 'expo-av';
-import * as Clipboard from 'expo-clipboard';
+// TODO: run `npm install expo-clipboard expo-share-intent` when network is available
+let Clipboard = { getStringAsync: async (): Promise<string> => '' };
+try { Clipboard = require('expo-clipboard'); } catch {}
 import * as ImagePicker from 'expo-image-picker';
 import * as Location from 'expo-location';
 import { router, useLocalSearchParams } from 'expo-router';
@@ -183,7 +185,7 @@ function TextModeScreen({ sharedText }: { sharedText?: string }) {
       });
       addThought({ ...res.data, tags: selectedTags.join(',') || res.data.tags });
       setContent(''); setImages([]); setLocation(null); setSelectedTags([]);
-      router.replace('/(tabs)/');
+      router.replace('/(tabs)');
     } catch { Alert.alert('保存失败'); }
     finally { setSaving(false); }
   }
@@ -343,7 +345,7 @@ function VoiceModeScreen() {
       });
       addThought({ ...res.data, audio: audioUri, tags: selectedTags.join(',') || res.data.tags });
       setPhase('idle'); setAudioUri(null); setDuration(0); setSelectedTags([]); setLocation(null);
-      router.replace('/(tabs)/');
+      router.replace('/(tabs)');
     } catch { Alert.alert('保存失败，请检查网络'); }
     finally { setSaving(false); }
   }
