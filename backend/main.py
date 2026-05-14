@@ -8,13 +8,14 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from auth import create_token, get_current_user_id, hash_password, verify_password
-from ai_worker import analyze_emotion, chat_with_notes, embed_thought, generate_daily_prompt, generate_insight, get_related_thought_ids, get_thought_graph, organize_thoughts, run_ocr, tag_thought_ai
+from ai_worker import analyze_emotion, chat_with_notes, embed_thought, generate_daily_prompt, generate_insight, generate_report, get_related_thought_ids, get_thought_graph, get_wordcloud_data, organize_thoughts, run_ocr, tag_thought_ai
 from database import (
     batch_delete_thoughts,
     create_thought,
     create_user,
     delete_collection,
     delete_thought,
+    get_cached_report,
     get_collection_by_id,
     get_collections,
     get_emotion_timeline,
@@ -23,9 +24,11 @@ from database import (
     get_stats,
     get_thoughts,
     get_thoughts_by_ids,
+    get_thoughts_in_range,
     get_today_prompt,
     get_user_by_username,
     init_db,
+    save_report,
     save_today_prompt,
     update_collection,
     update_thought,
@@ -393,6 +396,93 @@ def emotion_timeline(
 @app.get("/api/stats")
 def stats(user_id: int = Depends(get_current_user_id)):
     return get_stats(user_id=user_id)
+
+
+@app.post("/api/import")
+async def import_document(
+    file: UploadFile = File(...),
+    background_tasks: BackgroundTasks = BackgroundTasks(),
+    user_id: int = Depends(get_current_user_id),
+):
+    filename = file.filename or "document"
+    ext = os.path.splitext(filename)[1].lower()
+
+    if ext in (".md", ".txt"):
+        raw = await file.read()
+        content = raw.decode("utf-8", errors="replace").strip()
+    elif ext == ".docx":
+        try:
+            from docx import Document as DocxDocument
+        except ImportError:
+            raise HTTPException(status_code=503, detail="python-docx 未安装，无法解析 Word 文档")
+        raw = await file.read()
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".docx") as tmp:
+            tmp.write(raw)
+            tmp_path = tmp.name
+        try:
+            doc = DocxDocument(tmp_path)
+            paragraphs = [p.text.strip() for p in doc.paragraphs if p.text.strip()]
+            content = "\n\n".join(paragraphs)
+        finally:
+            try:
+                os.unlink(tmp_path)
+            except Exception:
+                pass
+    else:
+        raise HTTPException(status_code=400, detail="仅支持 .md / .txt / .docx 格式")
+
+    if not content:
+        raise HTTPException(status_code=422, detail="文档内容为空")
+
+    thought = create_thought(content=content, user_id=user_id)
+    background_tasks.add_task(tag_thought_ai, thought["id"], content)
+    background_tasks.add_task(embed_thought, thought["id"], content)
+    background_tasks.add_task(analyze_emotion, thought["id"], content)
+    return {"thought": thought}
+
+
+@app.get("/api/stats/wordcloud")
+def wordcloud(user_id: int = Depends(get_current_user_id)):
+    words = get_wordcloud_data(user_id=user_id)
+    return {"words": words}
+
+
+@app.get("/api/report")
+def get_report(
+    period: str = Query(default="week", pattern="^(week|month)$"),
+    user_id: int = Depends(get_current_user_id),
+):
+    from datetime import datetime, timedelta
+
+    now = datetime.utcnow()
+    if period == "week":
+        days_since_monday = now.weekday()
+        start = (now - timedelta(days=days_since_monday)).replace(hour=0, minute=0, second=0, microsecond=0)
+        end = now
+        period_key = start.strftime("%G-W%V")
+        start_label = start.strftime("%m月%d日")
+        end_label = end.strftime("%m月%d日")
+        period_label = f"本周报告（{start_label}—{end_label}）"
+    else:
+        start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        end = now
+        period_key = start.strftime("%Y-%m")
+        start_label = start.strftime("%m月%d日")
+        end_label = end.strftime("%m月%d日")
+        period_label = f"本月报告（{start.strftime('%Y年%m月')}）"
+
+    cached = get_cached_report(user_id, period, period_key)
+    if cached:
+        return {"report": cached, "period_label": period_label, "cached": True}
+
+    thoughts = get_thoughts_in_range(start.isoformat(), end.isoformat(), user_id=user_id)
+    try:
+        report_content = generate_report(user_id, period, thoughts, start_label, end_label)
+        save_report(user_id, period, period_key, report_content)
+    except Exception as e:
+        report_content = f"## {period_label}\n\n报告生成失败，请稍后重试。\n\n错误：{e}"
+
+    return {"report": report_content, "period_label": period_label, "cached": False}
 
 
 if __name__ == "__main__":

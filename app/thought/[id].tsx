@@ -1,6 +1,7 @@
 import { api, Thought, useStore, VOICE_PLACEHOLDER } from '@/hooks/useApi';
 import { useTheme } from '@/hooks/useTheme';
 import { ColorScheme } from '@/constants/Colors';
+import MarkdownView from '@/components/MarkdownView';
 import { Ionicons } from '@expo/vector-icons';
 import { Audio } from 'expo-av';
 import dayjs from 'dayjs';
@@ -312,7 +313,7 @@ export default function ThoughtDetailScreen() {
               <Text style={s.pendingText}>后台转录中，稍后刷新查看文字内容…</Text>
             </View>
           ) : (
-            <Text style={s.contentText}>{thought.content}</Text>
+            <MarkdownView content={thought.content} colors={colors} />
           )}
 
           {viewImages.length > 0 && (

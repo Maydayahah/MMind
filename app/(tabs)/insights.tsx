@@ -1,6 +1,7 @@
 import { api, EmotionData, logout, Stats, useAuthStore } from '@/hooks/useApi';
 import { useTheme } from '@/hooks/useTheme';
 import { ColorScheme } from '@/constants/Colors';
+import WordCloudView from '@/components/WordCloudView';
 import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import dayjs from 'dayjs';
@@ -44,6 +45,7 @@ export default function InsightsScreen() {
   const { username } = useAuthStore();
   const [insightOverride, setInsightOverride] = useState<string | null>(null);
   const [refreshingInsight, setRefreshingInsight] = useState(false);
+  const [wordcloudVisible, setWordcloudVisible] = useState(false);
 
   const { data: stats, isLoading, isError } = useQuery<Stats>({
     queryKey: ['stats'],
@@ -67,6 +69,16 @@ export default function InsightsScreen() {
       const res = await api.get('/api/stats/heatmap');
       return res.data;
     },
+  });
+
+  const { data: wordcloudData } = useQuery<{ words: { text: string; value: number }[] }>({
+    queryKey: ['wordcloud'],
+    queryFn: async () => {
+      const res = await api.get('/api/stats/wordcloud');
+      return res.data;
+    },
+    enabled: wordcloudVisible,
+    staleTime: 1000 * 60 * 30,
   });
 
   async function handleRefreshInsight() {
@@ -101,21 +113,21 @@ export default function InsightsScreen() {
         <View style={styles.titleRow}>
           <Text style={styles.title}>洞察</Text>
           <View style={styles.titleActions}>
-            <TouchableOpacity
-              style={styles.chatBtn}
-              onPress={() => router.push('/graph')}
-              activeOpacity={0.8}
-            >
+            <TouchableOpacity style={styles.chatBtn} onPress={() => router.push('/graph')} activeOpacity={0.8}>
               <Ionicons name="git-network-outline" size={15} color={colors.primary} />
-              <Text style={styles.chatBtnText}>思维导图</Text>
+              <Text style={styles.chatBtnText}>导图</Text>
             </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.chatBtn}
-              onPress={() => router.push('/chat')}
-              activeOpacity={0.8}
-            >
+            <TouchableOpacity style={styles.chatBtn} onPress={() => router.push('/chat')} activeOpacity={0.8}>
               <Ionicons name="chatbubble-ellipses-outline" size={15} color={colors.primary} />
-              <Text style={styles.chatBtnText}>与笔记对话</Text>
+              <Text style={styles.chatBtnText}>对话</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.reportBtn} onPress={() => router.push('/report?period=week')} activeOpacity={0.8}>
+              <Ionicons name="calendar-outline" size={14} color={colors.primary} />
+              <Text style={styles.chatBtnText}>周报</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.reportBtn} onPress={() => router.push('/report?period=month')} activeOpacity={0.8}>
+              <Ionicons name="bar-chart-outline" size={14} color={colors.primary} />
+              <Text style={styles.chatBtnText}>月报</Text>
             </TouchableOpacity>
             <TouchableOpacity style={styles.userBtn} onPress={handleLogout} activeOpacity={0.7}>
               <Ionicons name="person-circle-outline" size={18} color={colors.primary} />
@@ -157,6 +169,21 @@ export default function InsightsScreen() {
             </View>
 
             {heatmapData && <HeatmapSection data={heatmapData.data} colors={colors} styles={styles} />}
+
+            {/* 词云 */}
+            <View style={styles.section}>
+              <View style={styles.sectionTitleRow}>
+                <Text style={[styles.sectionTitle, { marginBottom: 0 }]}>词云</Text>
+                <TouchableOpacity onPress={() => setWordcloudVisible((v) => !v)} activeOpacity={0.7}>
+                  <Text style={styles.expandBtn}>{wordcloudVisible ? '收起' : '展开'}</Text>
+                </TouchableOpacity>
+              </View>
+              {wordcloudVisible && (
+                wordcloudData?.words?.length
+                  ? <WordCloudView words={wordcloudData.words} colors={colors} height={220} />
+                  : <View style={styles.cloudEmpty}><Text style={styles.cloudEmptyText}>记录更多随想后查看</Text></View>
+              )}
+            </View>
 
             {emotionData && (emotionData.timeline.length > 0 || Object.keys(emotionData.distribution).length > 0) && (
               <View style={styles.section}>
@@ -320,6 +347,7 @@ function makeStyles(c: ColorScheme) {
     titleActions: { flexDirection: 'row', alignItems: 'center', gap: 8 },
     chatBtn: { flexDirection: 'row', alignItems: 'center', gap: 5, backgroundColor: c.primaryLight, borderRadius: 20, paddingHorizontal: 10, paddingVertical: 5 },
     chatBtnText: { fontSize: 13, color: c.primary },
+    reportBtn: { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: c.primaryLight, borderRadius: 20, paddingHorizontal: 10, paddingVertical: 5 },
     title: { fontSize: 20, fontWeight: '700', color: c.text },
     userBtn: { flexDirection: 'row', alignItems: 'center', gap: 5, backgroundColor: c.primaryLight, borderRadius: 20, paddingHorizontal: 10, paddingVertical: 5 },
     userText: { fontSize: 13, color: c.primary },
@@ -344,6 +372,10 @@ function makeStyles(c: ColorScheme) {
       marginBottom: 16,
     },
     sectionTitle: { fontSize: 15, fontWeight: '600', color: c.text, marginBottom: 14 },
+    sectionTitleRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 },
+    expandBtn: { fontSize: 13, color: c.primary },
+    cloudEmpty: { paddingVertical: 24, alignItems: 'center' },
+    cloudEmptyText: { fontSize: 13, color: c.textTertiary },
     themeRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 12 },
     themeLabel: { width: 68, fontSize: 12, color: c.textSecondary },
     barBg: {

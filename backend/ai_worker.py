@@ -305,6 +305,95 @@ def generate_daily_prompt() -> str:
     return ask_ai(prompt).strip()
 
 
+def generate_report(user_id: int, period: str, thoughts: list[dict], start_label: str, end_label: str) -> str:
+    from collections import Counter
+
+    if not thoughts:
+        return f"## {start_label} — {end_label}\n\n这段时间没有随想记录。"
+
+    total = len(thoughts)
+    # Top tags
+    tag_counter: Counter = Counter()
+    for t in thoughts:
+        for tag in (t.get("tags") or "").split(","):
+            tag = tag.strip()
+            if tag:
+                tag_counter[tag] += 1
+    top_tags = [f"{tag}（{cnt}条）" for tag, cnt in tag_counter.most_common(5)]
+
+    # Emotion breakdown
+    emo_counter: Counter = Counter()
+    for t in thoughts:
+        e = (t.get("emotion") or "").strip()
+        if e:
+            emo_counter[e] += 1
+    emo_summary = "、".join(f"{e}×{n}" for e, n in emo_counter.most_common(4)) or "暂无情绪标签"
+
+    # Active days
+    from datetime import datetime as _dt
+    day_counter: Counter = Counter()
+    for t in thoughts:
+        try:
+            day_counter[_dt.fromisoformat(t["created_at"]).strftime("%m月%d日")] += 1
+        except Exception:
+            pass
+    most_active = day_counter.most_common(1)[0][0] if day_counter else "未知"
+    active_days = len(day_counter)
+
+    # Sample excerpts (up to 3)
+    excerpts = "\n".join(
+        f"- {t['content'][:80].replace(chr(10), ' ')}…"
+        for t in thoughts[:3]
+    )
+
+    period_label = "本周" if period == "week" else "本月"
+    prompt = f"""你是用户的私人思绪分析师，请根据以下数据生成一份{period_label}随想报告（中文 Markdown 格式）。
+
+数据摘要：
+- 时间范围：{start_label} — {end_label}
+- 记录总数：{total} 条
+- 写作天数：{active_days} 天，最活跃：{most_active}
+- 主要标签：{', '.join(top_tags) or '无'}
+- 情绪分布：{emo_summary}
+- 部分随想节选：
+{excerpts}
+
+请生成包含以下章节的 Markdown 报告（不要输出代码块，直接输出 Markdown 文本）：
+## 📊 数据概览
+## 💭 主要话题
+## 😊 情绪轨迹
+## ✨ 值得回顾
+## 🔮 给下一{'周' if period == 'week' else '月'}的建议
+
+要求：洞察深刻、语气温暖友好、总字数 300-400 字。"""
+
+    return ask_ai(prompt).strip()
+
+
+def get_wordcloud_data(user_id: int | None = None) -> list[dict]:
+    try:
+        import jieba
+        jieba.setLogLevel(60)  # suppress logs
+    except ImportError:
+        return []
+
+    from database import get_all_thought_contents
+    from collections import Counter
+
+    STOP_WORDS = set("的了是在我你他她它们这那也都和与或及等到从但不有说想会可就而为吗呢吧啊哦嗯吗很非常所以因为因此虽然然后如果虽但是所以因为还有一些这些那些什么怎么为什么如何只是就是真的其实其他其它即使可以已经一个一些一直一样更加对于关于来说关于还是没有好的能够看看下面上面这里那里之间之后之前通过使用")
+
+    contents = get_all_thought_contents(user_id)
+    full_text = " ".join(contents)
+    words = jieba.cut(full_text)
+    counter: Counter = Counter()
+    for w in words:
+        w = w.strip()
+        if len(w) >= 2 and w not in STOP_WORDS and not w.isdigit() and not all(c.isascii() for c in w):
+            counter[w] += 1
+
+    return [{"text": w, "value": v} for w, v in counter.most_common(80)]
+
+
 def get_thought_graph(user_id: int | None = None, max_nodes: int = 80) -> dict:
     import numpy as np
 

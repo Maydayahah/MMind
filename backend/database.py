@@ -56,6 +56,14 @@ def init_db():
             date       TEXT NOT NULL UNIQUE,
             created_at TEXT NOT NULL DEFAULT (datetime('now'))
         );
+        CREATE TABLE IF NOT EXISTS reports (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id    INTEGER NOT NULL,
+            period     TEXT NOT NULL,
+            period_key TEXT NOT NULL,
+            content    TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
     """)
     conn.commit()
     # 迁移旧数据库：安全地添加新列
@@ -396,6 +404,53 @@ def save_today_prompt(content: str):
         pass
     finally:
         conn.close()
+
+
+def get_cached_report(user_id: int, period: str, period_key: str) -> str | None:
+    conn = get_conn()
+    row = conn.execute(
+        "SELECT content FROM reports WHERE user_id=? AND period=? AND period_key=? ORDER BY created_at DESC LIMIT 1",
+        (user_id, period, period_key),
+    ).fetchone()
+    conn.close()
+    return row[0] if row else None
+
+
+def save_report(user_id: int, period: str, period_key: str, content: str):
+    conn = get_conn()
+    try:
+        conn.execute(
+            "INSERT INTO reports (user_id, period, period_key, content) VALUES (?, ?, ?, ?)",
+            (user_id, period, period_key, content),
+        )
+        conn.commit()
+    except Exception:
+        pass
+    finally:
+        conn.close()
+
+
+def get_thoughts_in_range(start: str, end: str, user_id: int | None = None) -> list[dict]:
+    conn = get_conn()
+    uid_clause = "AND user_id=?" if user_id is not None else ""
+    params = [start, end] + ([user_id] if user_id is not None else [])
+    rows = conn.execute(
+        f"SELECT * FROM thoughts WHERE created_at >= ? AND created_at < ? {uid_clause} ORDER BY created_at ASC",
+        params,
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def get_all_thought_contents(user_id: int | None = None) -> list[str]:
+    conn = get_conn()
+    uid_clause = "WHERE user_id=?" if user_id is not None else ""
+    params = (user_id,) if user_id is not None else ()
+    rows = conn.execute(
+        f"SELECT content FROM thoughts {uid_clause}", params
+    ).fetchall()
+    conn.close()
+    return [r[0] for r in rows if r[0]]
 
 
 def get_stats(user_id: int | None = None) -> dict:

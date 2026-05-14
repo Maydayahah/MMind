@@ -1,9 +1,12 @@
 import { api, useStore, VOICE_PLACEHOLDER } from '@/hooks/useApi';
 import { useTheme } from '@/hooks/useTheme';
 import { ColorScheme } from '@/constants/Colors';
+import MarkdownView from '@/components/MarkdownView';
 import { Ionicons } from '@expo/vector-icons';
 import { Audio } from 'expo-av';
 import { useQuery } from '@tanstack/react-query';
+let DocumentPicker: any = null;
+try { DocumentPicker = require('expo-document-picker'); } catch {}
 // TODO: run `npm install expo-clipboard expo-share-intent` when network is available
 let Clipboard = { getStringAsync: async (): Promise<string> => '' };
 try { Clipboard = require('expo-clipboard'); } catch {}
@@ -71,6 +74,8 @@ function TextModeScreen({ sharedText }: { sharedText?: string }) {
   const [gettingLocation, setGettingLocation] = useState(false);
   const [ocrLoading, setOcrLoading] = useState<Set<string>>(new Set());
   const [promptDismissed, setPromptDismissed] = useState(false);
+  const [preview, setPreview] = useState(false);
+  const [importing, setImporting] = useState(false);
   const { addThought } = useStore();
   const pulseAnim = useRef(new Animated.Value(1)).current;
   const pulseLoop = useRef<Animated.CompositeAnimation | null>(null);
@@ -97,6 +102,33 @@ function TextModeScreen({ sharedText }: { sharedText?: string }) {
     if (!clipboardBanner) return;
     setContent((prev) => prev.trim() ? `${prev.trim()}\n\n${clipboardBanner}` : clipboardBanner);
     setClipboardBanner(null);
+  }
+
+  async function importDocument() {
+    if (!DocumentPicker) { Alert.alert('提示', '文档导入功能需要安装 expo-document-picker'); return; }
+    setImporting(true);
+    try {
+      const result = await DocumentPicker.getDocumentAsync({
+        type: ['text/plain', 'text/markdown', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'],
+        copyToCacheDirectory: true,
+      });
+      if (result.canceled || !result.assets?.length) return;
+      const asset = result.assets[0];
+      const formData = new FormData();
+      formData.append('file', { uri: asset.uri, name: asset.name, type: asset.mimeType || 'text/plain' } as unknown as Blob);
+      const res = await api.post('/api/import', formData, { headers: { 'Content-Type': 'multipart/form-data' } });
+      if (res.data?.thought) {
+        addThought(res.data.thought);
+        Alert.alert('导入成功', `已从「${asset.name}」创建新随想`, [
+          { text: '查看', onPress: () => router.push(`/thought/${res.data.thought.id}`) },
+          { text: '继续写作', style: 'cancel' },
+        ]);
+      }
+    } catch (e: any) {
+      Alert.alert('导入失败', e?.response?.data?.detail ?? '请检查文件格式或网络');
+    } finally {
+      setImporting(false);
+    }
   }
 
   useEffect(() => {
@@ -246,15 +278,21 @@ function TextModeScreen({ sharedText }: { sharedText?: string }) {
           </View>
         )}
 
-        <TextInput
-          style={styles.input}
-          multiline autoFocus
-          placeholder="此刻有什么想法……"
-          placeholderTextColor={colors.placeholder}
-          value={content}
-          onChangeText={setContent}
-          textAlignVertical="top"
-        />
+        {preview ? (
+          <View style={styles.previewArea}>
+            <MarkdownView content={content || '_（暂无内容）_'} colors={colors} />
+          </View>
+        ) : (
+          <TextInput
+            style={styles.input}
+            multiline autoFocus
+            placeholder="此刻有什么想法……"
+            placeholderTextColor={colors.placeholder}
+            value={content}
+            onChangeText={setContent}
+            textAlignVertical="top"
+          />
+        )}
 
         {images.length > 0 && (
           <View style={styles.imageRow}>
@@ -306,6 +344,15 @@ function TextModeScreen({ sharedText }: { sharedText?: string }) {
           </TouchableOpacity>
           <TouchableOpacity style={styles.toolBtn} onPress={getLocation} disabled={gettingLocation} activeOpacity={0.7}>
             <Ionicons name={location ? 'location' : 'location-outline'} size={24} color={gettingLocation ? colors.primaryMuted : colors.primary} />
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.toolBtn} onPress={() => setPreview((v) => !v)} activeOpacity={0.7}>
+            <Ionicons name={preview ? 'eye-off-outline' : 'eye-outline'} size={24} color={preview ? colors.primary : colors.textSecondary} />
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.toolBtn} onPress={importDocument} disabled={importing} activeOpacity={0.7}>
+            {importing
+              ? <ActivityIndicator size="small" color={colors.primary} />
+              : <Ionicons name="folder-open-outline" size={24} color={colors.primary} />
+            }
           </TouchableOpacity>
         </View>
         <TouchableOpacity
@@ -480,8 +527,9 @@ function makeStyles(c: ColorScheme) {
     clipboardPreview: { flex: 1, fontSize: 12, color: c.primary },
     clipboardImportBtn: { backgroundColor: c.primary, borderRadius: 6, paddingHorizontal: 10, paddingVertical: 4 },
     clipboardImportText: { fontSize: 12, color: '#fff', fontWeight: '600' },
-    // 输入
+    // 输入 & 预览
     input: { minHeight: 160, paddingHorizontal: 16, paddingTop: 4, fontSize: 15, color: c.text, lineHeight: 24 },
+    previewArea: { minHeight: 160, paddingHorizontal: 16, paddingTop: 4 },
     imageRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, paddingHorizontal: 16, paddingBottom: 10 },
     imageThumb: { position: 'relative', width: 80, height: 80 },
     thumbImg: { width: 80, height: 80, borderRadius: 8 },
