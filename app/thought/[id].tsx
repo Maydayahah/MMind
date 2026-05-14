@@ -60,6 +60,15 @@ export default function ThoughtDetailScreen() {
     enabled: !!id && !editing,
   });
 
+  const { data: backlinks } = useQuery<Thought[]>({
+    queryKey: ['backlinks', id],
+    queryFn: async () => {
+      const res = await api.get(`/api/thoughts/${id}/backlinks`);
+      return res.data;
+    },
+    enabled: !!id && !editing,
+  });
+
   function enterEdit() {
     if (!thought) return;
     setContent(thought.content === VOICE_PLACEHOLDER ? '' : thought.content);
@@ -313,7 +322,7 @@ export default function ThoughtDetailScreen() {
               <Text style={s.pendingText}>后台转录中，稍后刷新查看文字内容…</Text>
             </View>
           ) : (
-            <MarkdownView content={thought.content} colors={colors} />
+            <LinkedContentView content={thought.content} colors={colors} s={s} />
           )}
 
           {viewImages.length > 0 && (
@@ -365,6 +374,26 @@ export default function ThoughtDetailScreen() {
                       ))}
                     </View>
                   ) : null}
+                </TouchableOpacity>
+              ))}
+            </View>
+          )}
+
+          {backlinks && backlinks.length > 0 && (
+            <View style={s.backlinksSection}>
+              <View style={s.relatedHeader}>
+                <Ionicons name="return-down-back-outline" size={14} color={colors.primary} />
+                <Text style={s.relatedTitle}>被以下随想引用</Text>
+              </View>
+              {backlinks.map((t) => (
+                <TouchableOpacity
+                  key={t.id}
+                  style={s.relatedCard}
+                  onPress={() => router.push(`/thought/${t.id}`)}
+                  activeOpacity={0.8}
+                >
+                  <Text style={s.relatedDate}>{dayjs(t.created_at).format('YYYY年M月D日 HH:mm')}</Text>
+                  <Text style={s.relatedContent} numberOfLines={2}>{t.content.replace(/\[\[\d+:[^\]]+\]\]/g, '').trim()}</Text>
                 </TouchableOpacity>
               ))}
             </View>
@@ -430,6 +459,53 @@ function AudioPlayer({
         <Text style={s.audioTime}>{dur > 0 ? `${fmtMs(pos)} / ${fmtMs(dur)}` : '语音备忘录'}</Text>
       </View>
     </TouchableOpacity>
+  );
+}
+
+// ── 双链内容视图 ────────────────────────────────────────────────────────────────
+
+function LinkedContentView({
+  content,
+  colors,
+  s,
+}: {
+  content: string;
+  colors: ColorScheme;
+  s: ReturnType<typeof makeStyles>;
+}) {
+  const parts: { type: 'text' | 'link'; value: string; id?: number; preview?: string }[] = [];
+  let lastIndex = 0;
+  const regex = /\[\[(\d+):([^\]]+)\]\]/g;
+  let m: RegExpExecArray | null;
+  while ((m = regex.exec(content)) !== null) {
+    if (m.index > lastIndex) {
+      parts.push({ type: 'text', value: content.slice(lastIndex, m.index) });
+    }
+    parts.push({ type: 'link', value: m[0], id: parseInt(m[1]), preview: m[2] });
+    lastIndex = m.index + m[0].length;
+  }
+  if (lastIndex < content.length) {
+    parts.push({ type: 'text', value: content.slice(lastIndex) });
+  }
+
+  return (
+    <View>
+      {parts.map((part, i) =>
+        part.type === 'link' ? (
+          <TouchableOpacity
+            key={i}
+            style={s.linkChip}
+            onPress={() => router.push(`/thought/${part.id}`)}
+            activeOpacity={0.7}
+          >
+            <Ionicons name="link-outline" size={12} color={colors.primary} />
+            <Text style={s.linkChipText}>{part.preview}</Text>
+          </TouchableOpacity>
+        ) : (
+          <MarkdownView key={i} content={part.value} colors={colors} />
+        )
+      )}
+    </View>
   );
 }
 
@@ -499,5 +575,8 @@ function makeStyles(c: ColorScheme) {
     editToolbar: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 8, paddingVertical: 10, borderTopWidth: 0.5, borderTopColor: c.border, backgroundColor: c.card },
     toolBtn: { padding: 8 },
     charCount: { marginLeft: 'auto', fontSize: 13, color: c.textTertiary, paddingRight: 8 },
+    linkChip: { flexDirection: 'row', alignItems: 'center', gap: 5, backgroundColor: c.primaryLight, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 5, alignSelf: 'flex-start', marginVertical: 4 },
+    linkChipText: { fontSize: 14, color: c.primary },
+    backlinksSection: { marginTop: 20, paddingTop: 20, borderTopWidth: 0.5, borderTopColor: c.border },
   });
 }

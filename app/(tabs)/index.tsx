@@ -72,7 +72,11 @@ export default function StreamScreen() {
     const matchQuery = !q ||
       t.content.toLowerCase().includes(q) ||
       t.tags.toLowerCase().includes(q);
-    const matchTag = !activeTag || t.tags.split(',').map((s) => s.trim()).includes(activeTag);
+    const matchTag = !activeTag
+      ? true
+      : activeTag === '__starred__'
+        ? t.starred === 1
+        : t.tags.split(',').map((s) => s.trim()).includes(activeTag);
     return matchQuery && matchTag;
   });
 
@@ -259,6 +263,13 @@ export default function StreamScreen() {
               onPress={() => setActiveTag(null)}
             >
               <Text style={[styles.filterChipText, !activeTag && styles.filterChipTextActive]}>全部</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.filterChip, styles.starredChip, activeTag === '__starred__' && styles.filterChipActive]}
+              onPress={() => setActiveTag((prev) => (prev === '__starred__' ? null : '__starred__'))}
+            >
+              <Ionicons name={activeTag === '__starred__' ? 'star' : 'star-outline'} size={12} color={activeTag === '__starred__' ? '#fff' : colors.warning} />
+              <Text style={[styles.filterChipText, activeTag === '__starred__' && styles.filterChipTextActive]}>星标</Text>
             </TouchableOpacity>
             {allTags.map((tag) => (
               <TouchableOpacity
@@ -472,6 +483,14 @@ function ThoughtCard({
 
   const isVoice = !!thought.audio;
   const isPending = thought.content === VOICE_PLACEHOLDER;
+  const { updateThought } = useStore();
+
+  async function toggleStar() {
+    try {
+      const res = await api.patch(`/api/thoughts/${thought.id}/star`);
+      updateThought(res.data);
+    } catch {}
+  }
 
   function handlePress() {
     if (selectMode) { onPress(); } else { router.push(`/thought/${thought.id}`); }
@@ -509,6 +528,15 @@ function ThoughtCard({
                 <Text style={styles.locText} numberOfLines={1}>{locName}</Text>
               </View>
             ) : null}
+            {!selectMode && (
+              <TouchableOpacity onPress={toggleStar} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }} style={styles.starBtn}>
+                <Ionicons
+                  name={thought.starred ? 'star' : 'star-outline'}
+                  size={14}
+                  color={thought.starred ? colors.warning : colors.textTertiary}
+                />
+              </TouchableOpacity>
+            )}
           </View>
 
           {isVoice && <AudioPlayer uri={thought.audio} colors={colors} styles={styles} />}
@@ -712,9 +740,11 @@ function makeStyles(c: ColorScheme) {
       borderWidth: 1,
       borderColor: c.border,
     },
+    starredChip: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 10 },
     filterChipActive: { backgroundColor: c.primary, borderColor: c.primary },
     filterChipText: { fontSize: 13, color: c.textSecondary },
     filterChipTextActive: { color: '#fff', fontWeight: '600' },
+    starBtn: { marginLeft: 'auto' },
     headerActions: { flexDirection: 'row', alignItems: 'center', gap: 10 },
     diceBtn: {
       width: 36,

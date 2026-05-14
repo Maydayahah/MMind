@@ -20,6 +20,7 @@ export interface Thought {
   audio: string;     // 本地音频 URI，用于回放
   emotion: string;
   emotion_score: number;
+  starred: number;   // 0 or 1
   created_at: string;
 }
 

@@ -75,6 +75,7 @@ def init_db():
         "ALTER TABLE thoughts ADD COLUMN embedding TEXT DEFAULT ''",
         "ALTER TABLE thoughts ADD COLUMN emotion TEXT DEFAULT ''",
         "ALTER TABLE thoughts ADD COLUMN emotion_score REAL DEFAULT 0",
+        "ALTER TABLE thoughts ADD COLUMN starred INTEGER DEFAULT 0",
         "ALTER TABLE collections ADD COLUMN user_id INTEGER",
     ]:
         try:
@@ -451,6 +452,86 @@ def get_all_thought_contents(user_id: int | None = None) -> list[str]:
     ).fetchall()
     conn.close()
     return [r[0] for r in rows if r[0]]
+
+
+def toggle_star(thought_id: int, user_id: int | None = None) -> dict | None:
+    conn = get_conn()
+    if user_id is not None:
+        row = conn.execute(
+            "SELECT starred FROM thoughts WHERE id=? AND user_id=?", (thought_id, user_id)
+        ).fetchone()
+    else:
+        row = conn.execute("SELECT starred FROM thoughts WHERE id=?", (thought_id,)).fetchone()
+    if not row:
+        conn.close()
+        return None
+    new_val = 0 if row[0] else 1
+    if user_id is not None:
+        conn.execute("UPDATE thoughts SET starred=? WHERE id=? AND user_id=?", (new_val, thought_id, user_id))
+    else:
+        conn.execute("UPDATE thoughts SET starred=? WHERE id=?", (new_val, thought_id))
+    conn.commit()
+    result = conn.execute("SELECT * FROM thoughts WHERE id=?", (thought_id,)).fetchone()
+    conn.close()
+    return dict(result) if result else None
+
+
+def get_all_tags(user_id: int | None = None) -> list[dict]:
+    from collections import Counter
+    conn = get_conn()
+    uid_clause = "WHERE user_id=? AND tags!=''" if user_id is not None else "WHERE tags!=''"
+    params = (user_id,) if user_id is not None else ()
+    rows = conn.execute(f"SELECT tags FROM thoughts {uid_clause}", params).fetchall()
+    conn.close()
+    counter: Counter = Counter()
+    for row in rows:
+        for tag in (row[0] or "").split(","):
+            tag = tag.strip()
+            if tag:
+                counter[tag] += 1
+    return [{"tag": tag, "count": count} for tag, count in counter.most_common()]
+
+
+def rename_tag(old_tag: str, new_tag: str, user_id: int | None = None):
+    conn = get_conn()
+    uid_clause = "AND user_id=?" if user_id is not None else ""
+    rows = conn.execute(
+        f"SELECT id, tags FROM thoughts WHERE (',' || tags || ',') LIKE ? {uid_clause}",
+        [f"%,{old_tag},%"] + ([user_id] if user_id is not None else []),
+    ).fetchall()
+    for row in rows:
+        tag_list = [t.strip() for t in (row["tags"] or "").split(",") if t.strip()]
+        tag_list = [new_tag if t == old_tag else t for t in tag_list]
+        conn.execute("UPDATE thoughts SET tags=? WHERE id=?", (",".join(tag_list), row["id"]))
+    conn.commit()
+    conn.close()
+
+
+def delete_tag(tag: str, user_id: int | None = None):
+    conn = get_conn()
+    uid_clause = "AND user_id=?" if user_id is not None else ""
+    rows = conn.execute(
+        f"SELECT id, tags FROM thoughts WHERE (',' || tags || ',') LIKE ? {uid_clause}",
+        [f"%,{tag},%"] + ([user_id] if user_id is not None else []),
+    ).fetchall()
+    for row in rows:
+        tag_list = [t.strip() for t in (row["tags"] or "").split(",") if t.strip() and t.strip() != tag]
+        conn.execute("UPDATE thoughts SET tags=? WHERE id=?", (",".join(tag_list), row["id"]))
+    conn.commit()
+    conn.close()
+
+
+def get_backlinks(thought_id: int, user_id: int | None = None) -> list[dict]:
+    conn = get_conn()
+    pattern = f"%[[{thought_id}:%"
+    uid_clause = "AND user_id=?" if user_id is not None else ""
+    params = [pattern] + ([user_id] if user_id is not None else [])
+    rows = conn.execute(
+        f"SELECT * FROM thoughts WHERE content LIKE ? {uid_clause} ORDER BY created_at DESC",
+        params,
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
 
 
 def get_stats(user_id: int | None = None) -> dict:

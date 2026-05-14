@@ -14,7 +14,10 @@ from database import (
     create_thought,
     create_user,
     delete_collection,
+    delete_tag,
     delete_thought,
+    get_all_tags,
+    get_backlinks,
     get_cached_report,
     get_collection_by_id,
     get_collections,
@@ -28,8 +31,10 @@ from database import (
     get_today_prompt,
     get_user_by_username,
     init_db,
+    rename_tag,
     save_report,
     save_today_prompt,
+    toggle_star,
     update_collection,
     update_thought,
     update_thought_content,
@@ -96,6 +101,11 @@ class OrganizeRequest(BaseModel):
 class ChatRequest(BaseModel):
     message: str
     history: list[dict] = []
+
+
+class TagRenameRequest(BaseModel):
+    old_tag: str
+    new_tag: str
 
 
 # ── Auth ──────────────────────────────────────────────────────────────────────
@@ -204,6 +214,40 @@ def remove_thoughts_batch(
 ):
     count = batch_delete_thoughts(body.ids, user_id=user_id)
     return {"deleted": count}
+
+
+@app.patch("/api/thoughts/{thought_id}/star")
+def star_thought(thought_id: int, user_id: int = Depends(get_current_user_id)):
+    t = toggle_star(thought_id, user_id=user_id)
+    if not t:
+        raise HTTPException(status_code=404, detail="随想不存在")
+    return t
+
+
+@app.get("/api/thoughts/{thought_id}/backlinks")
+def thought_backlinks(thought_id: int, user_id: int = Depends(get_current_user_id)):
+    return get_backlinks(thought_id, user_id=user_id)
+
+
+# ── Tags ──────────────────────────────────────────────────────────────────────
+
+@app.get("/api/tags")
+def list_tags(user_id: int = Depends(get_current_user_id)):
+    return get_all_tags(user_id=user_id)
+
+
+@app.put("/api/tags/rename")
+def do_rename_tag(body: TagRenameRequest, user_id: int = Depends(get_current_user_id)):
+    if not body.new_tag.strip():
+        raise HTTPException(status_code=400, detail="新标签名不能为空")
+    rename_tag(body.old_tag, body.new_tag.strip(), user_id=user_id)
+    return {"ok": True}
+
+
+@app.delete("/api/tags/{tag}")
+def do_delete_tag(tag: str, user_id: int = Depends(get_current_user_id)):
+    delete_tag(tag, user_id=user_id)
+    return {"ok": True}
 
 
 # ── Collections ───────────────────────────────────────────────────────────────

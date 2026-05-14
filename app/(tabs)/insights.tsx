@@ -113,6 +113,10 @@ export default function InsightsScreen() {
         <View style={styles.titleRow}>
           <Text style={styles.title}>洞察</Text>
           <View style={styles.titleActions}>
+            <TouchableOpacity style={styles.chatBtn} onPress={() => router.push('/tags')} activeOpacity={0.8}>
+              <Ionicons name="pricetags-outline" size={15} color={colors.primary} />
+              <Text style={styles.chatBtnText}>标签</Text>
+            </TouchableOpacity>
             <TouchableOpacity style={styles.chatBtn} onPress={() => router.push('/graph')} activeOpacity={0.8}>
               <Ionicons name="git-network-outline" size={15} color={colors.primary} />
               <Text style={styles.chatBtnText}>导图</Text>

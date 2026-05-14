@@ -2,6 +2,7 @@ import { api, useStore, VOICE_PLACEHOLDER } from '@/hooks/useApi';
 import { useTheme } from '@/hooks/useTheme';
 import { ColorScheme } from '@/constants/Colors';
 import MarkdownView from '@/components/MarkdownView';
+import dayjs from 'dayjs';
 import { Ionicons } from '@expo/vector-icons';
 import { Audio } from 'expo-av';
 import { useQuery } from '@tanstack/react-query';
@@ -76,7 +77,8 @@ function TextModeScreen({ sharedText }: { sharedText?: string }) {
   const [promptDismissed, setPromptDismissed] = useState(false);
   const [preview, setPreview] = useState(false);
   const [importing, setImporting] = useState(false);
-  const { addThought } = useStore();
+  const [linkQuery, setLinkQuery] = useState<string | null>(null);
+  const { addThought, thoughts } = useStore();
   const pulseAnim = useRef(new Animated.Value(1)).current;
   const pulseLoop = useRef<Animated.CompositeAnimation | null>(null);
 
@@ -97,6 +99,32 @@ function TextModeScreen({ sharedText }: { sharedText?: string }) {
     if (sharedText?.trim()) return;
     Clipboard.getStringAsync().then((text) => { if (text?.trim()) setClipboardBanner(text.trim()); });
   }, []);
+
+  function handleContentChange(text: string) {
+    setContent(text);
+    const tail = text.slice(-30);
+    const m = tail.match(/\[\[([^\]]{0,20})$/);
+    setLinkQuery(m ? m[1] : null);
+  }
+
+  function insertLink(id: number, thoughtContent: string) {
+    const m = content.match(/(.*)\[\[([^\]]*)$/s);
+    if (m) {
+      const previewText = thoughtContent.slice(0, 20).replace(/\n/g, ' ');
+      setContent(m[1] + `[[${id}:${previewText}]]`);
+    }
+    setLinkQuery(null);
+  }
+
+  const linkSuggestions = linkQuery !== null
+    ? thoughts
+        .filter((t) => {
+          if (!linkQuery) return true;
+          const q = linkQuery.toLowerCase();
+          return t.content.toLowerCase().includes(q) || t.tags.toLowerCase().includes(q);
+        })
+        .slice(0, 6)
+    : [];
 
   function importClipboard() {
     if (!clipboardBanner) return;
@@ -289,7 +317,7 @@ function TextModeScreen({ sharedText }: { sharedText?: string }) {
             placeholder="此刻有什么想法……"
             placeholderTextColor={colors.placeholder}
             value={content}
-            onChangeText={setContent}
+            onChangeText={handleContentChange}
             textAlignVertical="top"
           />
         )}
@@ -331,6 +359,26 @@ function TextModeScreen({ sharedText }: { sharedText?: string }) {
           })}
         </View>
       </ScrollView>
+
+      {linkQuery !== null && linkSuggestions.length > 0 && (
+        <View style={styles.linkPanel}>
+          <View style={styles.linkPanelHeader}>
+            <Ionicons name="link-outline" size={13} color={colors.primary} />
+            <Text style={styles.linkPanelTitle}>插入双链</Text>
+          </View>
+          {linkSuggestions.map((t) => (
+            <TouchableOpacity
+              key={t.id}
+              style={styles.linkSuggRow}
+              onPress={() => insertLink(t.id, t.content)}
+              activeOpacity={0.7}
+            >
+              <Text style={styles.linkSuggDate}>{dayjs(t.created_at).format('MM/DD')}</Text>
+              <Text style={styles.linkSuggContent} numberOfLines={1}>{t.content}</Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+      )}
 
       <View style={styles.toolbar}>
         <View style={styles.toolLeft}>
@@ -542,6 +590,13 @@ function makeStyles(c: ColorScheme) {
     tagPillActive: { backgroundColor: c.primary, borderColor: c.primary },
     tagPillText: { fontSize: 13, color: c.textSecondary },
     tagPillTextActive: { color: '#fff', fontWeight: '500' },
+    // 双链面板
+    linkPanel: { borderTopWidth: 0.5, borderTopColor: c.border, backgroundColor: c.card, paddingHorizontal: 12, paddingTop: 8, paddingBottom: 4 },
+    linkPanelHeader: { flexDirection: 'row', alignItems: 'center', gap: 5, marginBottom: 6 },
+    linkPanelTitle: { fontSize: 11, color: c.primary, fontWeight: '600' },
+    linkSuggRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 7, borderBottomWidth: 0.5, borderBottomColor: c.border },
+    linkSuggDate: { fontSize: 11, color: c.textTertiary, width: 36 },
+    linkSuggContent: { flex: 1, fontSize: 13, color: c.text },
     // 工具栏
     toolbar: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 12, borderTopWidth: 0.5, borderTopColor: c.border, backgroundColor: c.card },
     toolLeft: { flexDirection: 'row', gap: 4 },
