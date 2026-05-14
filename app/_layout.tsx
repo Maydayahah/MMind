@@ -64,6 +64,14 @@ export default function RootLayout() {
           name="thought/[id]"
           options={{ headerShown: false, animation: 'slide_from_right' }}
         />
+        <Stack.Screen
+          name="chat"
+          options={{ headerShown: false, animation: 'slide_from_right' }}
+        />
+        <Stack.Screen
+          name="graph"
+          options={{ headerShown: false, animation: 'slide_from_bottom' }}
+        />
       </Stack>
     </QueryClientProvider>
   );

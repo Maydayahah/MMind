@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from auth import create_token, get_current_user_id, hash_password, verify_password
-from ai_worker import organize_thoughts
+from ai_worker import analyze_emotion, chat_with_notes, embed_thought, generate_daily_prompt, generate_insight, get_related_thought_ids, get_thought_graph, organize_thoughts, run_ocr, tag_thought_ai
 from database import (
     batch_delete_thoughts,
     create_thought,
@@ -17,11 +17,16 @@ from database import (
     delete_thought,
     get_collection_by_id,
     get_collections,
+    get_emotion_timeline,
+    get_heatmap_data,
+    get_random_thought,
     get_stats,
     get_thoughts,
     get_thoughts_by_ids,
+    get_today_prompt,
     get_user_by_username,
     init_db,
+    save_today_prompt,
     update_collection,
     update_thought,
     update_thought_content,
@@ -85,6 +90,11 @@ class OrganizeRequest(BaseModel):
     thought_ids: Optional[list[int]] = None
 
 
+class ChatRequest(BaseModel):
+    message: str
+    history: list[dict] = []
+
+
 # ── Auth ──────────────────────────────────────────────────────────────────────
 
 @app.post("/api/auth/register", status_code=201)
@@ -112,11 +122,42 @@ def login(body: RegisterRequest):
 @app.post("/api/thoughts", status_code=201)
 def post_thought(
     body: ThoughtCreate,
+    background_tasks: BackgroundTasks,
     user_id: int = Depends(get_current_user_id),
 ):
     if not body.content.strip():
         raise HTTPException(status_code=400, detail="内容不能为空")
-    return create_thought(body.content.strip(), body.images, body.location, user_id=user_id)
+    thought = create_thought(body.content.strip(), body.images, body.location, user_id=user_id)
+    background_tasks.add_task(tag_thought_ai, thought["id"], thought["content"])
+    background_tasks.add_task(embed_thought, thought["id"], thought["content"])
+    background_tasks.add_task(analyze_emotion, thought["id"], thought["content"])
+    return thought
+
+
+@app.get("/api/thoughts/graph")
+def thought_graph(user_id: int = Depends(get_current_user_id)):
+    return get_thought_graph(user_id=user_id)
+
+
+@app.get("/api/thoughts/random")
+def random_thought(user_id: int = Depends(get_current_user_id)):
+    thought = get_random_thought(user_id=user_id)
+    if not thought:
+        raise HTTPException(status_code=404, detail="还没有随想")
+    return thought
+
+
+@app.get("/api/thoughts/{thought_id}/related")
+def related_thoughts(thought_id: int, user_id: int = Depends(get_current_user_id)):
+    ids = get_related_thought_ids(thought_id, user_id)
+    if not ids:
+        return []
+    return get_thoughts_by_ids(ids, user_id=user_id)
+
+
+@app.get("/api/stats/heatmap")
+def heatmap(user_id: int = Depends(get_current_user_id)):
+    return get_heatmap_data(user_id=user_id)
 
 
 @app.get("/api/thoughts")
@@ -261,6 +302,33 @@ def _transcribe_and_update(thought_id: int, audio_path: str):
             pass
 
 
+@app.post("/api/ocr")
+async def ocr_image(
+    file: UploadFile = File(...),
+    user_id: int = Depends(get_current_user_id),
+):
+    suffix = os.path.splitext(file.filename or "image.jpg")[1] or ".jpg"
+    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+        tmp.write(await file.read())
+        tmp_path = tmp.name
+    try:
+        text = run_ocr(tmp_path)
+        if not text:
+            raise HTTPException(status_code=422, detail="图片中未识别到文字")
+        return {"text": text}
+    except HTTPException:
+        raise
+    except RuntimeError as e:
+        raise HTTPException(status_code=503, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"OCR 失败: {e}")
+    finally:
+        try:
+            os.unlink(tmp_path)
+        except Exception:
+            pass
+
+
 @app.post("/api/transcribe")
 async def transcribe_audio(
     file: UploadFile = File(...),
@@ -287,6 +355,40 @@ async def transcribe_audio(
 
 
 # ── Stats ─────────────────────────────────────────────────────────────────────
+
+@app.get("/api/prompt/daily")
+def daily_prompt(user_id: int = Depends(get_current_user_id)):
+    content = get_today_prompt()
+    if not content:
+        try:
+            content = generate_daily_prompt()
+            save_today_prompt(content)
+        except Exception:
+            content = "今天有什么让你印象深刻的瞬间，值得记录下来？"
+    return {"prompt": content}
+
+
+@app.post("/api/chat")
+def chat(body: ChatRequest, user_id: int = Depends(get_current_user_id)):
+    reply = chat_with_notes(body.message, body.history, user_id)
+    return {"reply": reply}
+
+
+@app.post("/api/insights/refresh")
+def refresh_insight(user_id: int = Depends(get_current_user_id)):
+    insight = generate_insight(user_id)
+    if not insight:
+        raise HTTPException(status_code=400, detail="随想数量不足，无法生成分析")
+    return {"insight": insight}
+
+
+@app.get("/api/emotions/timeline")
+def emotion_timeline(
+    days: int = Query(default=30, ge=7, le=90),
+    user_id: int = Depends(get_current_user_id),
+):
+    return get_emotion_timeline(days=days, user_id=user_id)
+
 
 @app.get("/api/stats")
 def stats(user_id: int = Depends(get_current_user_id)):

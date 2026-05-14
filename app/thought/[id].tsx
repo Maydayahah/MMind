@@ -1,11 +1,16 @@
 import { api, Thought, useStore, VOICE_PLACEHOLDER } from '@/hooks/useApi';
+import { useTheme } from '@/hooks/useTheme';
+import { ColorScheme } from '@/constants/Colors';
 import { Ionicons } from '@expo/vector-icons';
 import { Audio } from 'expo-av';
+import dayjs from 'dayjs';
 import * as ImagePicker from 'expo-image-picker';
 import * as Location from 'expo-location';
 import { router, useLocalSearchParams } from 'expo-router';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import {
+  ActivityIndicator,
   Alert,
   Image,
   KeyboardAvoidingView,
@@ -28,6 +33,9 @@ function parseJson<T>(raw: string, fallback: T): T {
 }
 
 export default function ThoughtDetailScreen() {
+  const { colors } = useTheme();
+  const s = useMemo(() => makeStyles(colors), [colors]);
+
   const { id } = useLocalSearchParams<{ id: string }>();
   const { thoughts, updateThought, removeThought } = useStore();
 
@@ -40,8 +48,17 @@ export default function ThoughtDetailScreen() {
   const [location, setLocation] = useState<LocationData | null>(null);
   const [saving, setSaving] = useState(false);
   const [gettingLocation, setGettingLocation] = useState(false);
+  const [ocrLoading, setOcrLoading] = useState<Set<string>>(new Set());
 
-  // 进入编辑时初始化字段
+  const { data: related } = useQuery<Thought[]>({
+    queryKey: ['related', id],
+    queryFn: async () => {
+      const res = await api.get(`/api/thoughts/${id}/related`);
+      return res.data;
+    },
+    enabled: !!id && !editing,
+  });
+
   function enterEdit() {
     if (!thought) return;
     setContent(thought.content === VOICE_PLACEHOLDER ? '' : thought.content);
@@ -92,6 +109,25 @@ export default function ThoughtDetailScreen() {
     ]);
   }
 
+  async function ocrImage(uri: string) {
+    setOcrLoading((prev) => new Set(prev).add(uri));
+    try {
+      const filename = uri.split('/').pop() || 'image.jpg';
+      const ext = filename.split('.').pop()?.toLowerCase() || 'jpg';
+      const mimeType = ext === 'png' ? 'image/png' : 'image/jpeg';
+      const formData = new FormData();
+      formData.append('file', { uri, name: filename, type: mimeType } as unknown as Blob);
+      const res = await api.post('/api/ocr', formData, { headers: { 'Content-Type': 'multipart/form-data' } });
+      if (res.data?.text) {
+        setContent((prev) => prev.trim() ? `${prev.trim()}\n\n${res.data.text}` : res.data.text);
+      }
+    } catch (e: any) {
+      Alert.alert('识别失败', e?.response?.data?.detail ?? '请检查图片质量或网络');
+    } finally {
+      setOcrLoading((prev) => { const next = new Set(prev); next.delete(uri); return next; });
+    }
+  }
+
   async function pickImage() {
     const { granted } = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!granted) { Alert.alert('需要相册权限'); return; }
@@ -130,7 +166,7 @@ export default function ThoughtDetailScreen() {
       <SafeAreaView style={s.safeArea}>
         <View style={s.header}>
           <TouchableOpacity onPress={() => router.back()} style={s.backBtn}>
-            <Ionicons name="chevron-back" size={24} color="#534AB7" />
+            <Ionicons name="chevron-back" size={24} color={colors.primary} />
           </TouchableOpacity>
         </View>
         <Text style={s.notFound}>随想不存在或已删除</Text>
@@ -145,10 +181,9 @@ export default function ThoughtDetailScreen() {
 
   return (
     <SafeAreaView style={s.safeArea}>
-      {/* Header */}
       <View style={s.header}>
         <TouchableOpacity onPress={() => router.back()} style={s.backBtn}>
-          <Ionicons name="chevron-back" size={24} color="#534AB7" />
+          <Ionicons name="chevron-back" size={24} color={colors.primary} />
         </TouchableOpacity>
         <View style={s.headerRight}>
           {editing ? (
@@ -167,19 +202,17 @@ export default function ThoughtDetailScreen() {
           ) : (
             <>
               <TouchableOpacity onPress={enterEdit} style={s.headerBtn}>
-                <Ionicons name="create-outline" size={20} color="#534AB7" />
+                <Ionicons name="create-outline" size={20} color={colors.primary} />
               </TouchableOpacity>
               <TouchableOpacity onPress={handleDelete} style={s.headerBtn}>
-                <Ionicons name="trash-outline" size={20} color="#E53935" />
+                <Ionicons name="trash-outline" size={20} color={colors.danger} />
               </TouchableOpacity>
             </>
           )}
         </View>
       </View>
 
-      {/* Body */}
       {editing ? (
-        /* ── 编辑模式 ── */
         <KeyboardAvoidingView style={s.flex} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
           <ScrollView style={s.scroll} keyboardShouldPersistTaps="handled">
             <TextInput
@@ -189,11 +222,10 @@ export default function ThoughtDetailScreen() {
               value={content}
               onChangeText={setContent}
               placeholder="写点什么…"
-              placeholderTextColor="#C0BDB5"
+              placeholderTextColor={colors.placeholder}
               textAlignVertical="top"
             />
 
-            {/* 图片编辑 */}
             {images.length > 0 && (
               <View style={s.imageRow}>
                 {images.map((uri) => (
@@ -205,23 +237,27 @@ export default function ThoughtDetailScreen() {
                     >
                       <Ionicons name="close-circle" size={18} color="#fff" />
                     </TouchableOpacity>
+                    <TouchableOpacity style={s.ocrBtn} onPress={() => ocrImage(uri)} disabled={ocrLoading.has(uri)}>
+                      {ocrLoading.has(uri)
+                        ? <ActivityIndicator size="small" color="#fff" />
+                        : <Ionicons name="scan-outline" size={15} color="#fff" />
+                      }
+                    </TouchableOpacity>
                   </View>
                 ))}
               </View>
             )}
 
-            {/* 位置编辑 */}
             {location && (
               <View style={s.locationChip}>
-                <Ionicons name="location" size={13} color="#534AB7" />
+                <Ionicons name="location" size={13} color={colors.primary} />
                 <Text style={s.locationText} numberOfLines={1}>{location.name}</Text>
                 <TouchableOpacity onPress={() => setLocation(null)}>
-                  <Ionicons name="close" size={14} color="#888" />
+                  <Ionicons name="close" size={14} color={colors.textSecondary} />
                 </TouchableOpacity>
               </View>
             )}
 
-            {/* 标签编辑 */}
             <View style={s.tagSelector}>
               {PRESET_TAGS.map((tag) => {
                 const active = tags.includes(tag);
@@ -238,25 +274,22 @@ export default function ThoughtDetailScreen() {
             </View>
           </ScrollView>
 
-          {/* 编辑工具栏 */}
           <View style={s.editToolbar}>
             <TouchableOpacity style={s.toolBtn} onPress={pickImage}>
-              <Ionicons name="image-outline" size={22} color="#534AB7" />
+              <Ionicons name="image-outline" size={22} color={colors.primary} />
             </TouchableOpacity>
             <TouchableOpacity style={s.toolBtn} onPress={getLocation} disabled={gettingLocation}>
               <Ionicons
                 name={location ? 'location' : 'location-outline'}
                 size={22}
-                color={gettingLocation ? '#C5C3D9' : '#534AB7'}
+                color={gettingLocation ? colors.primaryMuted : colors.primary}
               />
             </TouchableOpacity>
             <Text style={s.charCount}>{content.length} 字</Text>
           </View>
         </KeyboardAvoidingView>
       ) : (
-        /* ── 查看模式 ── */
         <ScrollView style={s.scroll} showsVerticalScrollIndicator={false}>
-          {/* 元信息 */}
           <View style={s.metaRow}>
             <Text style={s.metaTime}>
               {new Date(thought.created_at).toLocaleString('zh-CN', {
@@ -265,26 +298,23 @@ export default function ThoughtDetailScreen() {
             </Text>
             {thought.audio ? (
               <View style={s.voiceBadge}>
-                <Ionicons name="mic" size={11} color="#534AB7" />
+                <Ionicons name="mic" size={11} color={colors.primary} />
                 <Text style={s.voiceBadgeText}>语音随想</Text>
               </View>
             ) : null}
           </View>
 
-          {/* 语音播放 */}
-          {thought.audio ? <AudioPlayer uri={thought.audio} /> : null}
+          {thought.audio ? <AudioPlayer uri={thought.audio} colors={colors} s={s} /> : null}
 
-          {/* 正文 */}
           {isPending ? (
             <View style={s.pendingBox}>
-              <Ionicons name="hourglass-outline" size={16} color="#aaa" />
+              <Ionicons name="hourglass-outline" size={16} color={colors.textTertiary} />
               <Text style={s.pendingText}>后台转录中，稍后刷新查看文字内容…</Text>
             </View>
           ) : (
             <Text style={s.contentText}>{thought.content}</Text>
           )}
 
-          {/* 图片 */}
           {viewImages.length > 0 && (
             <View style={s.imageGrid}>
               {viewImages.map((uri, i) => (
@@ -293,21 +323,48 @@ export default function ThoughtDetailScreen() {
             </View>
           )}
 
-          {/* 位置 */}
           {viewLocation && (
             <View style={s.infoRow}>
-              <Ionicons name="location" size={14} color="#534AB7" />
+              <Ionicons name="location" size={14} color={colors.primary} />
               <Text style={s.infoText}>{viewLocation.name}</Text>
             </View>
           )}
 
-          {/* 标签 */}
           {viewTags.length > 0 && (
             <View style={s.tagRow}>
               {viewTags.map((tag) => (
                 <View key={tag} style={s.tag}>
                   <Text style={s.tagText}>{tag}</Text>
                 </View>
+              ))}
+            </View>
+          )}
+
+          {related && related.length > 0 && (
+            <View style={s.relatedSection}>
+              <View style={s.relatedHeader}>
+                <Ionicons name="git-branch-outline" size={14} color={colors.primary} />
+                <Text style={s.relatedTitle}>相关随想</Text>
+              </View>
+              {related.map((t) => (
+                <TouchableOpacity
+                  key={t.id}
+                  style={s.relatedCard}
+                  onPress={() => router.push(`/thought/${t.id}`)}
+                  activeOpacity={0.8}
+                >
+                  <Text style={s.relatedDate}>{dayjs(t.created_at).format('YYYY年M月D日')}</Text>
+                  <Text style={s.relatedContent} numberOfLines={3}>{t.content}</Text>
+                  {t.tags ? (
+                    <View style={s.relatedTags}>
+                      {t.tags.split(',').filter(Boolean).map((tag) => (
+                        <View key={tag} style={s.relatedTag}>
+                          <Text style={s.relatedTagText}>{tag}</Text>
+                        </View>
+                      ))}
+                    </View>
+                  ) : null}
+                </TouchableOpacity>
               ))}
             </View>
           )}
@@ -321,7 +378,15 @@ export default function ThoughtDetailScreen() {
 
 // ── 音频播放器 ────────────────────────────────────────────────────────────────
 
-function AudioPlayer({ uri }: { uri: string }) {
+function AudioPlayer({
+  uri,
+  colors,
+  s,
+}: {
+  uri: string;
+  colors: ColorScheme;
+  s: ReturnType<typeof makeStyles>;
+}) {
   const [sound, setSound] = useState<Audio.Sound | null>(null);
   const [playing, setPlaying] = useState(false);
   const [pos, setPos] = useState(0);
@@ -329,7 +394,7 @@ function AudioPlayer({ uri }: { uri: string }) {
 
   async function toggle() {
     if (!sound) {
-      const { sound: s } = await Audio.Sound.createAsync(
+      const { sound: snd } = await Audio.Sound.createAsync(
         { uri },
         { shouldPlay: true },
         (status) => {
@@ -341,7 +406,7 @@ function AudioPlayer({ uri }: { uri: string }) {
           }
         }
       );
-      setSound(s);
+      setSound(snd);
       setPlaying(true);
     } else {
       playing ? await sound.pauseAsync() : await sound.playAsync();
@@ -350,13 +415,13 @@ function AudioPlayer({ uri }: { uri: string }) {
   }
 
   const fmtMs = (ms: number) => {
-    const s = Math.floor(ms / 1000);
-    return `${Math.floor(s / 60).toString().padStart(2, '0')}:${(s % 60).toString().padStart(2, '0')}`;
+    const sec = Math.floor(ms / 1000);
+    return `${Math.floor(sec / 60).toString().padStart(2, '0')}:${(sec % 60).toString().padStart(2, '0')}`;
   };
 
   return (
     <TouchableOpacity style={s.audioPlayer} onPress={toggle} activeOpacity={0.8}>
-      <Ionicons name={playing ? 'pause-circle' : 'play-circle'} size={32} color="#534AB7" />
+      <Ionicons name={playing ? 'pause-circle' : 'play-circle'} size={32} color={colors.primary} />
       <View style={s.audioInfo}>
         <View style={s.audioBarBg}>
           <View style={[s.audioBarFill, { width: `${dur > 0 ? (pos / dur) * 100 : 0}%` }]} />
@@ -369,51 +434,69 @@ function AudioPlayer({ uri }: { uri: string }) {
 
 // ── Styles ────────────────────────────────────────────────────────────────────
 
-const s = StyleSheet.create({
-  safeArea: { flex: 1, backgroundColor: '#FAFAF9' },
-  flex: { flex: 1 },
-  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 12, paddingVertical: 10 },
-  backBtn: { padding: 4 },
-  headerRight: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  headerBtn: { padding: 8 },
-  headerBtnPrimary: { backgroundColor: '#534AB7', borderRadius: 8, paddingHorizontal: 14 },
-  headerBtnText: { fontSize: 15, color: '#534AB7' },
-  headerBtnPrimaryText: { fontSize: 15, color: '#fff', fontWeight: '600' },
-  notFound: { textAlign: 'center', marginTop: 60, color: '#aaa', fontSize: 15 },
-  scroll: { flex: 1, paddingHorizontal: 16 },
-  metaRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 12, marginTop: 4 },
-  metaTime: { fontSize: 13, color: '#aaa' },
-  voiceBadge: { flexDirection: 'row', alignItems: 'center', gap: 3, backgroundColor: '#EEEDFE', borderRadius: 10, paddingHorizontal: 8, paddingVertical: 3 },
-  voiceBadgeText: { fontSize: 11, color: '#534AB7', fontWeight: '500' },
-  audioPlayer: { flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: '#F0EFFF', borderRadius: 14, padding: 14, marginBottom: 14 },
-  audioInfo: { flex: 1, gap: 6 },
-  audioBarBg: { height: 4, backgroundColor: '#D0CEE8', borderRadius: 2, overflow: 'hidden' },
-  audioBarFill: { height: 4, backgroundColor: '#534AB7', borderRadius: 2 },
-  audioTime: { fontSize: 12, color: '#888' },
-  contentText: { fontSize: 16, color: '#1a1a1a', lineHeight: 28 },
-  pendingBox: { flexDirection: 'row', alignItems: 'center', gap: 8, padding: 14, backgroundColor: '#F5F5F5', borderRadius: 10, marginBottom: 12 },
-  pendingText: { fontSize: 14, color: '#aaa', fontStyle: 'italic' },
-  imageGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 14 },
-  gridImg: { width: 100, height: 100, borderRadius: 8 },
-  infoRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 14 },
-  infoText: { fontSize: 13, color: '#534AB7' },
-  tagRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 12 },
-  tag: { backgroundColor: '#EEEDFE', borderRadius: 20, paddingHorizontal: 12, paddingVertical: 4 },
-  tagText: { fontSize: 13, color: '#3C3489' },
-  // 编辑模式
-  editInput: { fontSize: 16, color: '#1a1a1a', lineHeight: 26, minHeight: 200, paddingTop: 4 },
-  imageRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 10 },
-  imageThumb: { position: 'relative', width: 80, height: 80 },
-  thumbImg: { width: 80, height: 80, borderRadius: 8 },
-  removeImg: { position: 'absolute', top: -6, right: -6 },
-  locationChip: { flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 10, backgroundColor: '#EEEDFE', alignSelf: 'flex-start', borderRadius: 20, paddingHorizontal: 10, paddingVertical: 5 },
-  locationText: { fontSize: 12, color: '#534AB7', maxWidth: 200 },
-  tagSelector: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 12 },
-  tagPill: { borderRadius: 20, paddingHorizontal: 12, paddingVertical: 5, borderWidth: 1, borderColor: '#D0CEE8', backgroundColor: '#F8F7FF' },
-  tagPillActive: { backgroundColor: '#534AB7', borderColor: '#534AB7' },
-  tagPillText: { fontSize: 13, color: '#666' },
-  tagPillTextActive: { color: '#fff', fontWeight: '500' },
-  editToolbar: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 8, paddingVertical: 10, borderTopWidth: 0.5, borderTopColor: '#E8E6E0', backgroundColor: '#fff' },
-  toolBtn: { padding: 8 },
-  charCount: { marginLeft: 'auto', fontSize: 13, color: '#aaa', paddingRight: 8 },
-});
+function makeStyles(c: ColorScheme) {
+  return StyleSheet.create({
+    safeArea: { flex: 1, backgroundColor: c.bg },
+    flex: { flex: 1 },
+    header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 12, paddingVertical: 10 },
+    backBtn: { padding: 4 },
+    headerRight: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+    headerBtn: { padding: 8 },
+    headerBtnPrimary: { backgroundColor: c.primary, borderRadius: 8, paddingHorizontal: 14 },
+    headerBtnText: { fontSize: 15, color: c.primary },
+    headerBtnPrimaryText: { fontSize: 15, color: '#fff', fontWeight: '600' },
+    notFound: { textAlign: 'center', marginTop: 60, color: c.textTertiary, fontSize: 15 },
+    scroll: { flex: 1, paddingHorizontal: 16 },
+    metaRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 12, marginTop: 4 },
+    metaTime: { fontSize: 13, color: c.textTertiary },
+    voiceBadge: { flexDirection: 'row', alignItems: 'center', gap: 3, backgroundColor: c.primaryLight, borderRadius: 10, paddingHorizontal: 8, paddingVertical: 3 },
+    voiceBadgeText: { fontSize: 11, color: c.primary, fontWeight: '500' },
+    audioPlayer: { flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: c.audioBg, borderRadius: 14, padding: 14, marginBottom: 14 },
+    audioInfo: { flex: 1, gap: 6 },
+    audioBarBg: { height: 4, backgroundColor: c.audioBar, borderRadius: 2, overflow: 'hidden' },
+    audioBarFill: { height: 4, backgroundColor: c.primary, borderRadius: 2 },
+    audioTime: { fontSize: 12, color: c.textSecondary },
+    contentText: { fontSize: 16, color: c.text, lineHeight: 28 },
+    pendingBox: { flexDirection: 'row', alignItems: 'center', gap: 8, padding: 14, backgroundColor: c.inputBg, borderRadius: 10, marginBottom: 12 },
+    pendingText: { fontSize: 14, color: c.textTertiary, fontStyle: 'italic' },
+    imageGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 14 },
+    gridImg: { width: 100, height: 100, borderRadius: 8 },
+    infoRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 14 },
+    infoText: { fontSize: 13, color: c.primary },
+    tagRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 12 },
+    tag: { backgroundColor: c.primaryLight, borderRadius: 20, paddingHorizontal: 12, paddingVertical: 4 },
+    tagText: { fontSize: 13, color: c.primaryDark },
+    relatedSection: { marginTop: 24, paddingTop: 20, borderTopWidth: 0.5, borderTopColor: c.border },
+    relatedHeader: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 12 },
+    relatedTitle: { fontSize: 13, fontWeight: '600', color: c.primary },
+    relatedCard: {
+      backgroundColor: c.cardSelected,
+      borderRadius: 10,
+      padding: 12,
+      marginBottom: 8,
+      borderLeftWidth: 2,
+      borderLeftColor: c.primary,
+    },
+    relatedDate: { fontSize: 11, color: c.textTertiary, marginBottom: 4 },
+    relatedContent: { fontSize: 14, color: c.text, lineHeight: 20 },
+    relatedTags: { flexDirection: 'row', flexWrap: 'wrap', gap: 5, marginTop: 6 },
+    relatedTag: { backgroundColor: c.primaryLight, borderRadius: 20, paddingHorizontal: 8, paddingVertical: 2 },
+    relatedTagText: { fontSize: 11, color: c.primaryDark },
+    editInput: { fontSize: 16, color: c.text, lineHeight: 26, minHeight: 200, paddingTop: 4 },
+    imageRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 10 },
+    imageThumb: { position: 'relative', width: 80, height: 80 },
+    thumbImg: { width: 80, height: 80, borderRadius: 8 },
+    removeImg: { position: 'absolute', top: -6, right: -6 },
+    ocrBtn: { position: 'absolute', bottom: -6, left: -6, width: 24, height: 24, borderRadius: 12, backgroundColor: c.primary, alignItems: 'center', justifyContent: 'center' },
+    locationChip: { flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 10, backgroundColor: c.primaryLight, alignSelf: 'flex-start', borderRadius: 20, paddingHorizontal: 10, paddingVertical: 5 },
+    locationText: { fontSize: 12, color: c.primary, maxWidth: 200 },
+    tagSelector: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 12 },
+    tagPill: { borderRadius: 20, paddingHorizontal: 12, paddingVertical: 5, borderWidth: 1, borderColor: c.checkboxBorder, backgroundColor: c.cardSelected },
+    tagPillActive: { backgroundColor: c.primary, borderColor: c.primary },
+    tagPillText: { fontSize: 13, color: c.textSecondary },
+    tagPillTextActive: { color: '#fff', fontWeight: '500' },
+    editToolbar: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 8, paddingVertical: 10, borderTopWidth: 0.5, borderTopColor: c.border, backgroundColor: c.card },
+    toolBtn: { padding: 8 },
+    charCount: { marginLeft: 'auto', fontSize: 13, color: c.textTertiary, paddingRight: 8 },
+  });
+}

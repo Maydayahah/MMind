@@ -8,3 +8,8 @@ python-multipart>=0.0.9
 pydantic>=2.7.0
 passlib[bcrypt]>=1.7.4
 python-jose[cryptography]>=3.3.0
+sentence-transformers>=2.7.0
+numpy>=1.26.0
+# OCR: CPU版 paddlepaddle；若有GPU可换 paddlepaddle-gpu
+paddlepaddle>=2.6.0
+paddleocr>=2.7.0

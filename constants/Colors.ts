@@ -1,19 +1,50 @@
-const tintColorLight = '#2f95dc';
-const tintColorDark = '#fff';
-
-export default {
-  light: {
-    text: '#000',
-    background: '#fff',
-    tint: tintColorLight,
-    tabIconDefault: '#ccc',
-    tabIconSelected: tintColorLight,
-  },
-  dark: {
-    text: '#fff',
-    background: '#000',
-    tint: tintColorDark,
-    tabIconDefault: '#ccc',
-    tabIconSelected: tintColorDark,
-  },
+const light = {
+  bg: '#FAFAF9',
+  card: '#FFFFFF',
+  cardSelected: '#F8F7FF',
+  text: '#1A1A1A',
+  textSecondary: '#888888',
+  textTertiary: '#AAAAAA',
+  placeholder: '#C0BDB5',
+  border: '#E8E6E0',
+  inputBg: '#F0EFF8',
+  primary: '#534AB7',
+  primaryLight: '#EEEDFE',
+  primaryDark: '#3C3489',
+  primaryMuted: '#C5C3D9',
+  checkboxBorder: '#D0CEE8',
+  audioBg: '#F0EFFF',
+  audioBar: '#D0CEE8',
+  danger: '#E53935',
+  dangerBg: '#FFF0F0',
+  heatmapEmpty: '#EFEFEF',
+  iconMuted: '#D0CFC8',
+  overlay: 'rgba(0,0,0,0.4)',
 };
+
+const dark = {
+  bg: '#111113',
+  card: '#1C1C1E',
+  cardSelected: '#252038',
+  text: '#F2F2F7',
+  textSecondary: '#8E8E93',
+  textTertiary: '#636366',
+  placeholder: '#48484A',
+  border: '#38383A',
+  inputBg: '#2C2C2E',
+  primary: '#7C73D4',
+  primaryLight: '#252038',
+  primaryDark: '#A89FE0',
+  primaryMuted: '#4A4370',
+  checkboxBorder: '#4A4370',
+  audioBg: '#252038',
+  audioBar: '#4A4370',
+  danger: '#FF453A',
+  dangerBg: '#2D1F1F',
+  heatmapEmpty: '#2C2C2E',
+  iconMuted: '#48484A',
+  overlay: 'rgba(0,0,0,0.6)',
+};
+
+export type ColorScheme = typeof light;
+export const Colors = { light, dark };

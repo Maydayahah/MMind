@@ -50,6 +50,12 @@ def init_db():
             content    TEXT NOT NULL,
             created_at TEXT NOT NULL DEFAULT (datetime('now'))
         );
+        CREATE TABLE IF NOT EXISTS prompts (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            content    TEXT NOT NULL,
+            date       TEXT NOT NULL UNIQUE,
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
     """)
     conn.commit()
     # 迁移旧数据库：安全地添加新列
@@ -58,6 +64,9 @@ def init_db():
         "ALTER TABLE thoughts ADD COLUMN location TEXT DEFAULT ''",
         "ALTER TABLE thoughts ADD COLUMN audio TEXT DEFAULT ''",
         "ALTER TABLE thoughts ADD COLUMN user_id INTEGER",
+        "ALTER TABLE thoughts ADD COLUMN embedding TEXT DEFAULT ''",
+        "ALTER TABLE thoughts ADD COLUMN emotion TEXT DEFAULT ''",
+        "ALTER TABLE thoughts ADD COLUMN emotion_score REAL DEFAULT 0",
         "ALTER TABLE collections ADD COLUMN user_id INTEGER",
     ]:
         try:
@@ -307,6 +316,87 @@ def delete_collection(collection_id: int, user_id: int | None = None) -> bool:
 
 
 # ── Stats ────────────────────────────────────────────────────────────────────
+
+def get_random_thought(user_id: int | None = None) -> dict | None:
+    conn = get_conn()
+    uid_clause = "WHERE user_id=?" if user_id is not None else ""
+    params = (user_id,) if user_id is not None else ()
+    row = conn.execute(
+        f"SELECT * FROM thoughts {uid_clause} ORDER BY RANDOM() LIMIT 1", params
+    ).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def get_heatmap_data(user_id: int | None = None) -> dict:
+    conn = get_conn()
+    since = (datetime.utcnow() - timedelta(days=365)).isoformat()
+    uid_clause = "AND user_id=?" if user_id is not None else ""
+    params = [since] + ([user_id] if user_id is not None else [])
+    rows = conn.execute(
+        f"SELECT DATE(created_at) as date, COUNT(*) as count FROM thoughts"
+        f" WHERE created_at >= ? {uid_clause} GROUP BY DATE(created_at)",
+        params,
+    ).fetchall()
+    conn.close()
+    return {"data": {r["date"]: r["count"] for r in rows}}
+
+
+def get_emotion_timeline(days: int = 30, user_id: int | None = None) -> dict:
+    from collections import Counter
+    conn = get_conn()
+    since = (datetime.utcnow() - timedelta(days=days)).isoformat()
+    uid_clause = "AND user_id=?" if user_id is not None else ""
+    params = [since] + ([user_id] if user_id is not None else [])
+
+    rows = conn.execute(
+        f"SELECT DATE(created_at) as date, emotion, emotion_score"
+        f" FROM thoughts WHERE created_at >= ? AND emotion != '' {uid_clause}"
+        f" ORDER BY created_at ASC",
+        params,
+    ).fetchall()
+    conn.close()
+
+    by_date: dict[str, list] = {}
+    for r in rows:
+        by_date.setdefault(r["date"], []).append((r["emotion"], r["emotion_score"]))
+
+    timeline = []
+    for date, entries in sorted(by_date.items()):
+        scores = [e[1] for e in entries]
+        dominant = Counter(e[0] for e in entries).most_common(1)[0][0]
+        timeline.append({
+            "date": date,
+            "avg_score": round(sum(scores) / len(scores), 3),
+            "dominant": dominant,
+            "count": len(entries),
+        })
+
+    all_emotions = [r["emotion"] for r in rows]
+    distribution = dict(Counter(all_emotions))
+
+    return {"timeline": timeline, "distribution": distribution}
+
+
+def get_today_prompt() -> str | None:
+    conn = get_conn()
+    today = date.today().isoformat()
+    row = conn.execute("SELECT content FROM prompts WHERE date=?", (today,)).fetchone()
+    conn.close()
+    return row[0] if row else None
+
+
+def save_today_prompt(content: str):
+    conn = get_conn()
+    today = date.today().isoformat()
+    try:
+        conn.execute("INSERT OR REPLACE INTO prompts (content, date) VALUES (?, ?)", (content, today))
+        conn.commit()
+    except Exception:
+        pass
+    finally:
+        conn.close()
+
 
 def get_stats(user_id: int | None = None) -> dict:
     conn = get_conn()

@@ -1,4 +1,6 @@
 import { api, Thought, useStore, VOICE_PLACEHOLDER } from '@/hooks/useApi';
+import { useTheme } from '@/hooks/useTheme';
+import { ColorScheme } from '@/constants/Colors';
 import { Audio } from 'expo-av';
 import { Ionicons } from '@expo/vector-icons';
 import { useQuery } from '@tanstack/react-query';
@@ -6,11 +8,12 @@ import dayjs from 'dayjs';
 import * as FileSystem from 'expo-file-system';
 import { router } from 'expo-router';
 import * as Sharing from 'expo-sharing';
-import { useRef, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import {
   Alert,
   FlatList,
   Image,
+  Modal,
   Platform,
   RefreshControl,
   ScrollView,
@@ -22,14 +25,30 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-const PRESET_TAGS = ['创作与灵感', '生活观察', '技术思考', '阅读笔记'];
+const EMOTION_COLORS: Record<string, string> = {
+  开心: '#4CAF50', 兴奋: '#FF9800', 平静: '#2196F3',
+  思考: '#9C27B0', 焦虑: '#FF5722', 低落: '#78909C',
+};
 
 export default function StreamScreen() {
+  const { colors } = useTheme();
+  const styles = useMemo(() => makeStyles(colors), [colors]);
+
   const { thoughts, setThoughts, removeThoughts } = useStore();
   const [selectMode, setSelectMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [query, setQuery] = useState('');
   const [activeTag, setActiveTag] = useState<string | null>(null);
+  const [randomThought, setRandomThought] = useState<Thought | null>(null);
+  const [loadingRandom, setLoadingRandom] = useState(false);
+
+  const allTags = useMemo(() => {
+    const tagSet = new Set<string>();
+    thoughts.forEach((t) => {
+      if (t.tags) t.tags.split(',').forEach((tag) => { if (tag.trim()) tagSet.add(tag.trim()); });
+    });
+    return Array.from(tagSet).sort();
+  }, [thoughts]);
 
   const { refetch, isRefetching } = useQuery({
     queryKey: ['thoughts'],
@@ -48,15 +67,15 @@ export default function StreamScreen() {
     return dayjs(date).format('M月D日');
   };
 
-  // 过滤逻辑：搜索 + 标签 AND 组合
   const filtered = thoughts.filter((t) => {
     const q = query.trim().toLowerCase();
-    const matchQuery = !q || t.content.toLowerCase().includes(q);
-    const matchTag = !activeTag || t.tags.split(',').includes(activeTag);
+    const matchQuery = !q ||
+      t.content.toLowerCase().includes(q) ||
+      t.tags.toLowerCase().includes(q);
+    const matchTag = !activeTag || t.tags.split(',').map((s) => s.trim()).includes(activeTag);
     return matchQuery && matchTag;
   });
 
-  // 历史上的今天：同月同日、往年的随想
   const todayMMDD = dayjs().format('MM-DD');
   const currentYear = dayjs().year();
   const onThisDay = thoughts.filter((t) => {
@@ -72,8 +91,6 @@ export default function StreamScreen() {
   }, {} as Record<string, Thought[]>);
 
   const sections = Object.entries(grouped).sort(([a], [b]) => b.localeCompare(a));
-
-  // ── 选择模式 ──────────────────────────────────────────────────────────────
 
   function enterSelectMode(id: number) {
     setSelectMode(true);
@@ -96,8 +113,6 @@ export default function StreamScreen() {
   function selectAll() {
     setSelectedIds(new Set(thoughts.map((t) => t.id)));
   }
-
-  // ── 批量操作 ──────────────────────────────────────────────────────────────
 
   async function handleBatchDelete() {
     const ids = Array.from(selectedIds);
@@ -159,7 +174,6 @@ export default function StreamScreen() {
     const md = lines.join('\n');
 
     if (Platform.OS === 'web') {
-      // Web: 触发浏览器下载
       const blob = new Blob([md], { type: 'text/markdown' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
@@ -175,11 +189,20 @@ export default function StreamScreen() {
     exitSelectMode();
   }
 
-  // ── 渲染 ──────────────────────────────────────────────────────────────────
+  async function fetchRandom() {
+    setLoadingRandom(true);
+    try {
+      const res = await api.get('/api/thoughts/random');
+      setRandomThought(res.data);
+    } catch {
+      Alert.alert('提示', '还没有随想');
+    } finally {
+      setLoadingRandom(false);
+    }
+  }
 
   return (
     <SafeAreaView style={styles.safeArea}>
-      {/* Header */}
       {selectMode ? (
         <View style={styles.header}>
           <TouchableOpacity onPress={exitSelectMode}>
@@ -193,25 +216,26 @@ export default function StreamScreen() {
       ) : (
         <View style={styles.header}>
           <Text style={styles.title}>思绪</Text>
-          <TouchableOpacity
-            style={styles.addBtn}
-            onPress={() => router.push('/(tabs)/write')}
-          >
-            <Ionicons name="add" size={16} color="#fff" />
-            <Text style={styles.addBtnText}>记录</Text>
-          </TouchableOpacity>
+          <View style={styles.headerActions}>
+            <TouchableOpacity style={styles.diceBtn} onPress={fetchRandom} activeOpacity={0.7}>
+              <Ionicons name="shuffle-outline" size={18} color={colors.primary} />
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.addBtn} onPress={() => router.push('/(tabs)/write')}>
+              <Ionicons name="add" size={16} color="#fff" />
+              <Text style={styles.addBtnText}>记录</Text>
+            </TouchableOpacity>
+          </View>
         </View>
       )}
 
-      {/* 搜索栏 + 标签筛选（选择模式时隐藏） */}
       {!selectMode && (
         <>
           <View style={styles.searchBar}>
-            <Ionicons name="search-outline" size={16} color="#aaa" />
+            <Ionicons name="search-outline" size={16} color={colors.textTertiary} />
             <TextInput
               style={styles.searchInput}
               placeholder="搜索随想内容…"
-              placeholderTextColor="#C0BDB5"
+              placeholderTextColor={colors.placeholder}
               value={query}
               onChangeText={setQuery}
               returnKeyType="search"
@@ -219,7 +243,7 @@ export default function StreamScreen() {
             />
             {query.length > 0 && (
               <TouchableOpacity onPress={() => setQuery('')} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-                <Ionicons name="close-circle" size={16} color="#C0BDB5" />
+                <Ionicons name="close-circle" size={16} color={colors.placeholder} />
               </TouchableOpacity>
             )}
           </View>
@@ -236,7 +260,7 @@ export default function StreamScreen() {
             >
               <Text style={[styles.filterChipText, !activeTag && styles.filterChipTextActive]}>全部</Text>
             </TouchableOpacity>
-            {PRESET_TAGS.map((tag) => (
+            {allTags.map((tag) => (
               <TouchableOpacity
                 key={tag}
                 style={[styles.filterChip, activeTag === tag && styles.filterChipActive]}
@@ -255,12 +279,12 @@ export default function StreamScreen() {
         keyExtractor={([date]) => date}
         refreshControl={
           !selectMode ? (
-            <RefreshControl refreshing={isRefetching} onRefresh={refetch} tintColor="#534AB7" colors={['#534AB7']} />
+            <RefreshControl refreshing={isRefetching} onRefresh={refetch} tintColor={colors.primary} colors={[colors.primary]} />
           ) : undefined
         }
         ListHeaderComponent={
           !selectMode && !query && !activeTag && onThisDay.length > 0 ? (
-            <OnThisDayCard thoughts={onThisDay} />
+            <OnThisDayCard thoughts={onThisDay} colors={colors} styles={styles} />
           ) : null
         }
         renderItem={({ item: [date, items] }) => (
@@ -274,43 +298,119 @@ export default function StreamScreen() {
                 selected={selectedIds.has(thought.id)}
                 onLongPress={() => enterSelectMode(thought.id)}
                 onPress={() => selectMode && toggleSelect(thought.id)}
+                colors={colors}
+                styles={styles}
               />
             ))}
           </View>
         )}
         ListEmptyComponent={
           <View style={styles.emptyContainer}>
-            <Ionicons name="leaf-outline" size={40} color="#D0CFC8" />
+            <Ionicons name="leaf-outline" size={40} color={colors.iconMuted} />
             <Text style={styles.emptyText}>{query || activeTag ? '没有匹配的随想' : '还没有随想'}</Text>
             <Text style={styles.emptyHint}>{query || activeTag ? '换个关键词或标签试试' : '点击右上角「记录」开始记录'}</Text>
           </View>
         }
       />
 
-      {/* 批量操作栏 */}
       {selectMode && selectedIds.size > 0 && (
         <View style={styles.actionBar}>
           <TouchableOpacity style={styles.actionBtn} onPress={handleBatchOrganize}>
-            <Ionicons name="sparkles-outline" size={20} color="#534AB7" />
+            <Ionicons name="sparkles-outline" size={20} color={colors.primary} />
             <Text style={styles.actionBtnText}>整理</Text>
           </TouchableOpacity>
           <TouchableOpacity style={styles.actionBtn} onPress={handleBatchExport}>
-            <Ionicons name="share-outline" size={20} color="#534AB7" />
+            <Ionicons name="share-outline" size={20} color={colors.primary} />
             <Text style={styles.actionBtnText}>导出</Text>
           </TouchableOpacity>
           <TouchableOpacity style={[styles.actionBtn, styles.actionBtnDelete]} onPress={handleBatchDelete}>
-            <Ionicons name="trash-outline" size={20} color="#E53935" />
-            <Text style={[styles.actionBtnText, { color: '#E53935' }]}>删除</Text>
+            <Ionicons name="trash-outline" size={20} color={colors.danger} />
+            <Text style={[styles.actionBtnText, { color: colors.danger }]}>删除</Text>
           </TouchableOpacity>
         </View>
       )}
+
+      <Modal
+        visible={randomThought !== null}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setRandomThought(null)}
+      >
+        <TouchableOpacity
+          style={styles.modalOverlay}
+          activeOpacity={1}
+          onPress={() => setRandomThought(null)}
+        >
+          <TouchableOpacity activeOpacity={1} style={styles.randomCard}>
+            <View style={styles.randomHeader}>
+              <View style={styles.randomHeaderLeft}>
+                <Ionicons name="shuffle-outline" size={14} color={colors.primary} />
+                <Text style={styles.randomLabel}>随机回顾</Text>
+              </View>
+              <TouchableOpacity onPress={() => setRandomThought(null)}>
+                <Ionicons name="close" size={20} color={colors.textTertiary} />
+              </TouchableOpacity>
+            </View>
+
+            {randomThought && (
+              <>
+                <Text style={styles.randomDate}>
+                  {dayjs(randomThought.created_at).format('YYYY年M月D日 HH:mm')}
+                </Text>
+                <ScrollView style={styles.randomScroll} showsVerticalScrollIndicator={false}>
+                  <Text style={styles.randomContent}>{randomThought.content}</Text>
+                </ScrollView>
+                {randomThought.tags ? (
+                  <View style={styles.tagRow}>
+                    {randomThought.tags.split(',').filter(Boolean).map((tag) => (
+                      <View key={tag} style={styles.tag}>
+                        <Text style={styles.tagText}>{tag}</Text>
+                      </View>
+                    ))}
+                  </View>
+                ) : null}
+              </>
+            )}
+
+            <View style={styles.randomActions}>
+              <TouchableOpacity
+                style={styles.randomSecondaryBtn}
+                onPress={fetchRandom}
+                disabled={loadingRandom}
+              >
+                <Ionicons name="shuffle-outline" size={15} color={colors.primary} />
+                <Text style={styles.randomSecondaryText}>换一条</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.randomPrimaryBtn}
+                onPress={() => {
+                  if (randomThought) {
+                    setRandomThought(null);
+                    router.push(`/thought/${randomThought.id}`);
+                  }
+                }}
+              >
+                <Text style={styles.randomPrimaryText}>查看详情</Text>
+              </TouchableOpacity>
+            </View>
+          </TouchableOpacity>
+        </TouchableOpacity>
+      </Modal>
     </SafeAreaView>
   );
 }
 
 // ── 历史上的今天 ───────────────────────────────────────────────────────────────
 
-function OnThisDayCard({ thoughts }: { thoughts: Thought[] }) {
+function OnThisDayCard({
+  thoughts,
+  colors,
+  styles,
+}: {
+  thoughts: Thought[];
+  colors: ColorScheme;
+  styles: ReturnType<typeof makeStyles>;
+}) {
   const byYear = thoughts.reduce((acc, t) => {
     const y = dayjs(t.created_at).year();
     if (!acc[y]) acc[y] = [];
@@ -323,7 +423,7 @@ function OnThisDayCard({ thoughts }: { thoughts: Thought[] }) {
   return (
     <View style={styles.onThisDay}>
       <View style={styles.onThisDayHeader}>
-        <Ionicons name="calendar-outline" size={14} color="#534AB7" />
+        <Ionicons name="calendar-outline" size={14} color={colors.primary} />
         <Text style={styles.onThisDayTitle}>历史上的今天</Text>
       </View>
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 10 }}>
@@ -353,12 +453,16 @@ function ThoughtCard({
   selected,
   onLongPress,
   onPress,
+  colors,
+  styles,
 }: {
   thought: Thought;
   selectMode: boolean;
   selected: boolean;
   onLongPress: () => void;
   onPress: () => void;
+  colors: ColorScheme;
+  styles: ReturnType<typeof makeStyles>;
 }) {
   const tags = thought.tags ? thought.tags.split(',').filter(Boolean) : [];
   let imgs: string[] = [];
@@ -390,27 +494,28 @@ function ThoughtCard({
         <View style={styles.cardContent}>
           <View style={styles.cardMeta}>
             <Text style={styles.time}>{dayjs(thought.created_at).format('HH:mm')}</Text>
+            {!!thought.emotion && (
+              <View style={[styles.emotionDot, { backgroundColor: EMOTION_COLORS[thought.emotion] ?? '#aaa' }]} />
+            )}
             {isVoice && (
               <View style={styles.voiceBadge}>
-                <Ionicons name="mic" size={10} color="#534AB7" />
+                <Ionicons name="mic" size={10} color={colors.primary} />
                 <Text style={styles.voiceBadgeText}>语音</Text>
               </View>
             )}
             {locName ? (
               <View style={styles.locBadge}>
-                <Ionicons name="location" size={10} color="#534AB7" />
+                <Ionicons name="location" size={10} color={colors.primary} />
                 <Text style={styles.locText} numberOfLines={1}>{locName}</Text>
               </View>
             ) : null}
           </View>
 
-          {/* 语音播放器 */}
-          {isVoice && <AudioPlayer uri={thought.audio} />}
+          {isVoice && <AudioPlayer uri={thought.audio} colors={colors} styles={styles} />}
 
-          {/* 内容：pending 时显示转录中提示 */}
           {isPending ? (
             <View style={styles.pendingRow}>
-              <Ionicons name="hourglass-outline" size={13} color="#aaa" />
+              <Ionicons name="hourglass-outline" size={13} color={colors.textTertiary} />
               <Text style={styles.pendingText}>转录中，刷新后查看文字…</Text>
             </View>
           ) : (
@@ -448,11 +553,19 @@ function ThoughtCard({
 
 // ── 音频播放器 ────────────────────────────────────────────────────────────────
 
-function AudioPlayer({ uri }: { uri: string }) {
+function AudioPlayer({
+  uri,
+  colors,
+  styles,
+}: {
+  uri: string;
+  colors: ColorScheme;
+  styles: ReturnType<typeof makeStyles>;
+}) {
   const [sound, setSound] = useState<Audio.Sound | null>(null);
   const [playing, setPlaying] = useState(false);
-  const [pos, setPos] = useState(0);    // ms
-  const [dur, setDur] = useState(0);    // ms
+  const [pos, setPos] = useState(0);
+  const [dur, setDur] = useState(0);
 
   async function toggle() {
     if (!sound) {
@@ -485,7 +598,7 @@ function AudioPlayer({ uri }: { uri: string }) {
 
   return (
     <TouchableOpacity style={styles.audioPlayer} onPress={toggle} activeOpacity={0.8}>
-      <Ionicons name={playing ? 'pause' : 'play'} size={18} color="#534AB7" />
+      <Ionicons name={playing ? 'pause' : 'play'} size={18} color={colors.primary} />
       <View style={styles.audioBar}>
         <View style={[styles.audioProgress, { width: `${progress * 100}%` }]} />
       </View>
@@ -494,131 +607,185 @@ function AudioPlayer({ uri }: { uri: string }) {
   );
 }
 
-const styles = StyleSheet.create({
-  safeArea: { flex: 1, backgroundColor: '#FAFAF9' },
-  header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-  },
-  title: { fontSize: 22, fontWeight: '700', color: '#1a1a1a' },
-  addBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    backgroundColor: '#534AB7',
-    borderRadius: 10,
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-  },
-  addBtnText: { color: '#fff', fontSize: 14, fontWeight: '600' },
-  cancelBtn: { fontSize: 15, color: '#534AB7' },
-  selectCount: { fontSize: 15, fontWeight: '600', color: '#1a1a1a' },
-  selectAllBtn: { fontSize: 15, color: '#534AB7' },
-  list: { paddingHorizontal: 16 },
-  dateHeader: { fontSize: 12, color: '#888', fontWeight: '500', marginTop: 12, marginBottom: 8 },
-  card: {
-    backgroundColor: '#fff',
-    borderRadius: 12,
-    padding: 14,
-    marginBottom: 10,
-    borderWidth: 0.5,
-    borderColor: '#E8E6E0',
-  },
-  cardSelected: { borderColor: '#534AB7', backgroundColor: '#F8F7FF' },
-  cardRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 10 },
-  checkbox: {
-    width: 22,
-    height: 22,
-    borderRadius: 11,
-    borderWidth: 1.5,
-    borderColor: '#D0CEE8',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginTop: 1,
-  },
-  checkboxActive: { backgroundColor: '#534AB7', borderColor: '#534AB7' },
-  cardContent: { flex: 1 },
-  cardMeta: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 4 },
-  time: { fontSize: 11, color: '#aaa' },
-  locBadge: { flexDirection: 'row', alignItems: 'center', gap: 2, backgroundColor: '#EEEDFE', borderRadius: 10, paddingHorizontal: 6, paddingVertical: 2 },
-  locText: { fontSize: 10, color: '#534AB7', maxWidth: 100 },
-  content: { fontSize: 15, color: '#1a1a1a', lineHeight: 22 },
-  imgRow: { flexDirection: 'row', gap: 6, marginTop: 8 },
-  imgThumb: { width: 64, height: 64, borderRadius: 6 },
-  imgMore: { width: 64, height: 64, borderRadius: 6, backgroundColor: '#E8E6E0', alignItems: 'center', justifyContent: 'center' },
-  imgMoreText: { fontSize: 14, color: '#666', fontWeight: '600' },
-  tagRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 8 },
-  tag: { backgroundColor: '#EEEDFE', borderRadius: 20, paddingHorizontal: 10, paddingVertical: 3 },
-  tagText: { fontSize: 12, color: '#3C3489' },
-  emptyContainer: { alignItems: 'center', paddingTop: 80, gap: 8 },
-  emptyText: { fontSize: 16, color: '#aaa', fontWeight: '500' },
-  emptyHint: { fontSize: 13, color: '#C0BDB5' },
-  voiceBadge: { flexDirection: 'row', alignItems: 'center', gap: 2, backgroundColor: '#EEEDFE', borderRadius: 10, paddingHorizontal: 6, paddingVertical: 2 },
-  voiceBadgeText: { fontSize: 10, color: '#534AB7' },
-  pendingRow: { flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 4 },
-  pendingText: { fontSize: 13, color: '#aaa', fontStyle: 'italic' },
-  audioPlayer: { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: '#F0EFFF', borderRadius: 20, paddingHorizontal: 12, paddingVertical: 8, marginTop: 6, marginBottom: 4 },
-  audioBar: { flex: 1, height: 4, backgroundColor: '#D0CEE8', borderRadius: 2, overflow: 'hidden' },
-  audioProgress: { height: 4, backgroundColor: '#534AB7', borderRadius: 2 },
-  audioTime: { fontSize: 12, color: '#534AB7', fontVariant: ['tabular-nums'] },
-  actionBar: {
-    flexDirection: 'row',
-    justifyContent: 'space-around',
-    paddingVertical: 14,
-    borderTopWidth: 0.5,
-    borderTopColor: '#E8E6E0',
-    backgroundColor: '#fff',
-  },
-  actionBtn: { alignItems: 'center', gap: 4, flex: 1 },
-  actionBtnDelete: {},
-  actionBtnText: { fontSize: 12, color: '#534AB7' },
-  // 搜索栏
-  searchBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    marginHorizontal: 16,
-    marginBottom: 10,
-    backgroundColor: '#F0EFF8',
-    borderRadius: 12,
-    paddingHorizontal: 12,
-    paddingVertical: 9,
-  },
-  searchInput: { flex: 1, fontSize: 14, color: '#1a1a1a', padding: 0 },
-  // 标签筛选
-  tagFilterScroll: { flexGrow: 0, marginBottom: 4 },
-  tagFilterContent: { paddingHorizontal: 16, gap: 8, paddingBottom: 6 },
-  filterChip: {
-    borderRadius: 20,
-    paddingHorizontal: 14,
-    paddingVertical: 6,
-    backgroundColor: '#F0EFF8',
-    borderWidth: 1,
-    borderColor: '#E0DEF0',
-  },
-  filterChipActive: { backgroundColor: '#534AB7', borderColor: '#534AB7' },
-  filterChipText: { fontSize: 13, color: '#666' },
-  filterChipTextActive: { color: '#fff', fontWeight: '600' },
-  // 历史上的今天
-  onThisDay: {
-    marginBottom: 12,
-    backgroundColor: '#EEEDFE',
-    borderRadius: 14,
-    padding: 14,
-  },
-  onThisDayHeader: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 10 },
-  onThisDayTitle: { fontSize: 13, fontWeight: '600', color: '#534AB7' },
-  onThisDayCard: {
-    width: 180,
-    backgroundColor: '#fff',
-    borderRadius: 10,
-    padding: 12,
-    borderLeftWidth: 3,
-    borderLeftColor: '#534AB7',
-  },
-  onThisDayYear: { fontSize: 11, color: '#534AB7', fontWeight: '600', marginBottom: 4 },
-  onThisDayContent: { fontSize: 13, color: '#333', lineHeight: 19 },
-});
+function makeStyles(c: ColorScheme) {
+  return StyleSheet.create({
+    safeArea: { flex: 1, backgroundColor: c.bg },
+    header: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      paddingHorizontal: 16,
+      paddingVertical: 12,
+    },
+    title: { fontSize: 22, fontWeight: '700', color: c.text },
+    addBtn: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 4,
+      backgroundColor: c.primary,
+      borderRadius: 10,
+      paddingHorizontal: 14,
+      paddingVertical: 8,
+    },
+    addBtnText: { color: '#fff', fontSize: 14, fontWeight: '600' },
+    cancelBtn: { fontSize: 15, color: c.primary },
+    selectCount: { fontSize: 15, fontWeight: '600', color: c.text },
+    selectAllBtn: { fontSize: 15, color: c.primary },
+    list: { paddingHorizontal: 16 },
+    dateHeader: { fontSize: 12, color: c.textSecondary, fontWeight: '500', marginTop: 12, marginBottom: 8 },
+    card: {
+      backgroundColor: c.card,
+      borderRadius: 12,
+      padding: 14,
+      marginBottom: 10,
+      borderWidth: 0.5,
+      borderColor: c.border,
+    },
+    cardSelected: { borderColor: c.primary, backgroundColor: c.cardSelected },
+    cardRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 10 },
+    checkbox: {
+      width: 22,
+      height: 22,
+      borderRadius: 11,
+      borderWidth: 1.5,
+      borderColor: c.checkboxBorder,
+      alignItems: 'center',
+      justifyContent: 'center',
+      marginTop: 1,
+    },
+    checkboxActive: { backgroundColor: c.primary, borderColor: c.primary },
+    cardContent: { flex: 1 },
+    cardMeta: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 4 },
+    time: { fontSize: 11, color: c.textTertiary },
+    emotionDot: { width: 7, height: 7, borderRadius: 4 },
+    locBadge: { flexDirection: 'row', alignItems: 'center', gap: 2, backgroundColor: c.primaryLight, borderRadius: 10, paddingHorizontal: 6, paddingVertical: 2 },
+    locText: { fontSize: 10, color: c.primary, maxWidth: 100 },
+    content: { fontSize: 15, color: c.text, lineHeight: 22 },
+    imgRow: { flexDirection: 'row', gap: 6, marginTop: 8 },
+    imgThumb: { width: 64, height: 64, borderRadius: 6 },
+    imgMore: { width: 64, height: 64, borderRadius: 6, backgroundColor: c.border, alignItems: 'center', justifyContent: 'center' },
+    imgMoreText: { fontSize: 14, color: c.textSecondary, fontWeight: '600' },
+    tagRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 8 },
+    tag: { backgroundColor: c.primaryLight, borderRadius: 20, paddingHorizontal: 10, paddingVertical: 3 },
+    tagText: { fontSize: 12, color: c.primaryDark },
+    emptyContainer: { alignItems: 'center', paddingTop: 80, gap: 8 },
+    emptyText: { fontSize: 16, color: c.textTertiary, fontWeight: '500' },
+    emptyHint: { fontSize: 13, color: c.placeholder },
+    voiceBadge: { flexDirection: 'row', alignItems: 'center', gap: 2, backgroundColor: c.primaryLight, borderRadius: 10, paddingHorizontal: 6, paddingVertical: 2 },
+    voiceBadgeText: { fontSize: 10, color: c.primary },
+    pendingRow: { flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 4 },
+    pendingText: { fontSize: 13, color: c.textTertiary, fontStyle: 'italic' },
+    audioPlayer: { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: c.audioBg, borderRadius: 20, paddingHorizontal: 12, paddingVertical: 8, marginTop: 6, marginBottom: 4 },
+    audioBar: { flex: 1, height: 4, backgroundColor: c.audioBar, borderRadius: 2, overflow: 'hidden' },
+    audioProgress: { height: 4, backgroundColor: c.primary, borderRadius: 2 },
+    audioTime: { fontSize: 12, color: c.primary, fontVariant: ['tabular-nums'] },
+    actionBar: {
+      flexDirection: 'row',
+      justifyContent: 'space-around',
+      paddingVertical: 14,
+      borderTopWidth: 0.5,
+      borderTopColor: c.border,
+      backgroundColor: c.card,
+    },
+    actionBtn: { alignItems: 'center', gap: 4, flex: 1 },
+    actionBtnDelete: {},
+    actionBtnText: { fontSize: 12, color: c.primary },
+    searchBar: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      marginHorizontal: 16,
+      marginBottom: 10,
+      backgroundColor: c.inputBg,
+      borderRadius: 12,
+      paddingHorizontal: 12,
+      paddingVertical: 9,
+    },
+    searchInput: { flex: 1, fontSize: 14, color: c.text, padding: 0 },
+    tagFilterScroll: { flexGrow: 0, marginBottom: 4 },
+    tagFilterContent: { paddingHorizontal: 16, gap: 8, paddingBottom: 6 },
+    filterChip: {
+      borderRadius: 20,
+      paddingHorizontal: 14,
+      paddingVertical: 6,
+      backgroundColor: c.inputBg,
+      borderWidth: 1,
+      borderColor: c.border,
+    },
+    filterChipActive: { backgroundColor: c.primary, borderColor: c.primary },
+    filterChipText: { fontSize: 13, color: c.textSecondary },
+    filterChipTextActive: { color: '#fff', fontWeight: '600' },
+    headerActions: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+    diceBtn: {
+      width: 36,
+      height: 36,
+      borderRadius: 18,
+      backgroundColor: c.primaryLight,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    modalOverlay: {
+      flex: 1,
+      backgroundColor: c.overlay,
+      justifyContent: 'center',
+      alignItems: 'center',
+      padding: 24,
+    },
+    randomCard: {
+      width: '100%',
+      maxHeight: '70%',
+      backgroundColor: c.card,
+      borderRadius: 20,
+      padding: 20,
+      shadowColor: '#000',
+      shadowOpacity: 0.12,
+      shadowRadius: 20,
+      elevation: 8,
+    },
+    randomHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
+    randomHeaderLeft: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+    randomLabel: { fontSize: 14, fontWeight: '600', color: c.primary },
+    randomDate: { fontSize: 12, color: c.textTertiary, marginBottom: 12 },
+    randomScroll: { maxHeight: 240, marginBottom: 12 },
+    randomContent: { fontSize: 16, color: c.text, lineHeight: 26 },
+    randomActions: { flexDirection: 'row', gap: 10, marginTop: 16 },
+    randomSecondaryBtn: {
+      flex: 1,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 5,
+      paddingVertical: 11,
+      borderRadius: 12,
+      backgroundColor: c.primaryLight,
+    },
+    randomSecondaryText: { fontSize: 14, color: c.primary, fontWeight: '500' },
+    randomPrimaryBtn: {
+      flex: 1,
+      alignItems: 'center',
+      justifyContent: 'center',
+      paddingVertical: 11,
+      borderRadius: 12,
+      backgroundColor: c.primary,
+    },
+    randomPrimaryText: { fontSize: 14, color: '#fff', fontWeight: '600' },
+    onThisDay: {
+      marginBottom: 12,
+      backgroundColor: c.primaryLight,
+      borderRadius: 14,
+      padding: 14,
+    },
+    onThisDayHeader: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 10 },
+    onThisDayTitle: { fontSize: 13, fontWeight: '600', color: c.primary },
+    onThisDayCard: {
+      width: 180,
+      backgroundColor: c.card,
+      borderRadius: 10,
+      padding: 12,
+      borderLeftWidth: 3,
+      borderLeftColor: c.primary,
+    },
+    onThisDayYear: { fontSize: 11, color: c.primary, fontWeight: '600', marginBottom: 4 },
+    onThisDayContent: { fontSize: 13, color: c.text, lineHeight: 19 },
+  });
+}
