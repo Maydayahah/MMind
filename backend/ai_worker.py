@@ -1,17 +1,23 @@
+from __future__ import annotations
+
 # backend/ai_worker.py
 import os
 import json
 from openai import OpenAI
-from database import get_db
+from database import DEFAULT_USER_ID, get_db
 
-client = OpenAI(
-    api_key=os.environ["DEEPSEEK_API_KEY"],
-    base_url="https://api.deepseek.com"
-)
 MODEL = "deepseek-chat"
 
 
 def ask_ai(prompt: str) -> str:
+    api_key = os.environ.get("DEEPSEEK_API_KEY")
+    if not api_key:
+        raise RuntimeError("DEEPSEEK_API_KEY is not configured")
+
+    client = OpenAI(
+        api_key=api_key,
+        base_url="https://api.deepseek.com",
+    )
     response = client.chat.completions.create(
         model=MODEL,
         max_tokens=2048,
@@ -20,21 +26,24 @@ def ask_ai(prompt: str) -> str:
     return response.choices[0].message.content
 
 
-def organize_thoughts(thought_ids: list[int] | None = None):
+def organize_thoughts(
+    thought_ids: list[int] | None = None,
+    user_id: str = DEFAULT_USER_ID,
+):
     conn = get_db()
 
     if thought_ids:
         placeholders = ",".join("?" * len(thought_ids))
         thoughts = conn.execute(
-            f"SELECT * FROM thoughts WHERE id IN ({placeholders}) ORDER BY created_at ASC",
-            thought_ids,
+            f"SELECT * FROM thoughts WHERE user_id = ? AND id IN ({placeholders}) ORDER BY created_at ASC",
+            [user_id, *thought_ids],
         ).fetchall()
     else:
         thoughts = conn.execute("""
             SELECT * FROM thoughts
-            WHERE created_at >= datetime('now', '-7 days')
+            WHERE user_id = ? AND created_at >= datetime('now', '-7 days')
             ORDER BY created_at ASC
-        """).fetchall()
+        """, (user_id,)).fetchall()
 
     if len(thoughts) < 3:
         print(f"[AI] 随想数量 {len(thoughts)} < 3，跳过整理")
@@ -74,8 +83,8 @@ def organize_thoughts(thought_ids: list[int] | None = None):
         content = ask_ai(collection_prompt)
         ids_str = ",".join(str(t["id"]) for t in thoughts)
         conn.execute(
-            "INSERT INTO collections (title, theme, content, thought_ids, period) VALUES (?, ?, ?, ?, ?)",
-            (f"{theme} · 随想录", theme, content, ids_str, period)
+            "INSERT INTO collections (user_id, title, theme, content, thought_ids, period) VALUES (?, ?, ?, ?, ?, ?)",
+            (user_id, f"{theme} · 随想录", theme, content, ids_str, period),
         )
         conn.commit()
 
@@ -90,7 +99,9 @@ def organize_thoughts(thought_ids: list[int] | None = None):
         matched = [tag for tag, kws in tag_map.items()
                    if any(kw in t["content"] for kw in kws)]
         if matched:
-            conn.execute("UPDATE thoughts SET tags=? WHERE id=?",
-                         (",".join(matched), t["id"]))
+            conn.execute(
+                "UPDATE thoughts SET tags=? WHERE id=? AND user_id=?",
+                (",".join(matched), t["id"], user_id),
+            )
     conn.commit()
     print(f"✅ 整理完成，生成了 {len(themes)} 个主题文集")

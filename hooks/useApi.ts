@@ -4,9 +4,24 @@ import { create } from 'zustand';
 import { createJSONStorage, persist } from 'zustand/middleware';
 
 // 修改为你电脑的局域网 IP（运行 ipconfig 查看）
-export const API_BASE = 'http://10.238.8.62:8001';
+export const API_BASE = 'http://172.31.105.63:8001';
+const USER_ID_KEY = 'mmind:user-id';
 
 export const api = axios.create({ baseURL: API_BASE, timeout: 30000 });
+
+async function getUserId() {
+  const existing = await AsyncStorage.getItem(USER_ID_KEY);
+  if (existing) return existing;
+
+  const userId = `user-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
+  await AsyncStorage.setItem(USER_ID_KEY, userId);
+  return userId;
+}
+
+api.interceptors.request.use(async (config) => {
+  config.headers.set('X-User-Id', await getUserId());
+  return config;
+});
 
 export const VOICE_PLACEHOLDER = '[语音处理中]';
 
@@ -70,6 +85,9 @@ export const useStore = create<Store>()(
       removeCollection: (id) =>
         set((s) => ({ collections: s.collections.filter((c) => c.id !== id) })),
     }),
-    { storage: createJSONStorage(() => AsyncStorage) }
+    {
+      name: 'mmind-store',
+      storage: createJSONStorage(() => AsyncStorage),
+    }
   )
 );
