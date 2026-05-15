@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from auth import create_token, get_current_user_id, hash_password, verify_password
-from ai_worker import analyze_emotion, chat_with_notes, embed_thought, generate_daily_prompt, generate_insight, generate_report, get_related_thought_ids, get_thought_graph, get_wordcloud_data, organize_thoughts, run_ocr, tag_thought_ai
+from ai_worker import analyze_emotion, chat_with_notes, embed_thought, generate_daily_prompt, generate_insight, generate_report, get_related_thought_ids, get_thought_graph, get_wordcloud_data, organize_thoughts, run_ocr, search_thoughts, tag_thought_ai
 from database import (
     batch_delete_thoughts,
     create_thought,
@@ -483,6 +483,17 @@ async def import_document(
     background_tasks.add_task(embed_thought, thought["id"], content)
     background_tasks.add_task(analyze_emotion, thought["id"], content)
     return {"thought": thought}
+
+
+@app.get("/api/search")
+def semantic_search(
+    q: str = Query(default="", min_length=1),
+    top_k: int = Query(default=20, ge=1, le=50),
+    user_id: int = Depends(get_current_user_id),
+):
+    if not q.strip():
+        raise HTTPException(status_code=400, detail="查询不能为空")
+    return search_thoughts(q.strip(), user_id=user_id, top_k=top_k)
 
 
 @app.get("/api/stats/wordcloud")

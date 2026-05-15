@@ -1,7 +1,8 @@
 import { ColorScheme } from '@/constants/Colors';
 import { useRef, useEffect } from 'react';
-import { View } from 'react-native';
-import { WebView } from 'react-native-webview';
+import { Text, View } from 'react-native';
+let WebView: any = null;
+try { WebView = require('react-native-webview').WebView; } catch {}
 
 interface Word { text: string; value: number; }
 
@@ -129,6 +130,14 @@ export default function WordCloudView({ words, colors, height = 220 }: Props) {
       inject(pendingRef.current);
       pendingRef.current = null;
     }
+  }
+
+  if (!WebView) {
+    return (
+      <View style={{ height, backgroundColor: colors.card, borderRadius: 8, overflow: 'hidden', alignItems: 'center', justifyContent: 'center' }}>
+        <Text style={{ color: colors.textTertiary, fontSize: 13 }}>词云需要安装 react-native-webview</Text>
+      </View>
+    );
   }
 
   return (

@@ -5,7 +5,8 @@ import { router } from 'expo-router';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { WebView } from 'react-native-webview';
+let WebView: any = null;
+try { WebView = require('react-native-webview').WebView; } catch {}
 
 // ── HTML 模板：力导向图（Canvas + 纯JS，无外部依赖）────────────────────────────
 

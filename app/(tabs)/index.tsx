@@ -10,6 +10,7 @@ import { router } from 'expo-router';
 import * as Sharing from 'expo-sharing';
 import { useMemo, useRef, useState } from 'react';
 import {
+  ActivityIndicator,
   Alert,
   FlatList,
   Image,
@@ -41,6 +42,9 @@ export default function StreamScreen() {
   const [activeTag, setActiveTag] = useState<string | null>(null);
   const [randomThought, setRandomThought] = useState<Thought | null>(null);
   const [loadingRandom, setLoadingRandom] = useState(false);
+  const [semanticResults, setSemanticResults] = useState<(Thought & { score?: number; match_mode?: string })[] | null>(null);
+  const [semanticSearching, setSemanticSearching] = useState(false);
+  const [semanticQuery, setSemanticQuery] = useState('');
 
   const allTags = useMemo(() => {
     const tagSet = new Set<string>();
@@ -193,6 +197,26 @@ export default function StreamScreen() {
     exitSelectMode();
   }
 
+  async function runSemanticSearch() {
+    const q = query.trim();
+    if (!q) return;
+    setSemanticSearching(true);
+    try {
+      const res = await api.get('/api/search', { params: { q, top_k: 20 } });
+      setSemanticResults(res.data.results);
+      setSemanticQuery(q);
+    } catch (e: any) {
+      Alert.alert('搜索失败', e?.response?.data?.detail ?? '请检查网络连接');
+    } finally {
+      setSemanticSearching(false);
+    }
+  }
+
+  function exitSemanticSearch() {
+    setSemanticResults(null);
+    setSemanticQuery('');
+  }
+
   async function fetchRandom() {
     setLoadingRandom(true);
     try {
@@ -241,16 +265,39 @@ export default function StreamScreen() {
               placeholder="搜索随想内容…"
               placeholderTextColor={colors.placeholder}
               value={query}
-              onChangeText={setQuery}
+              onChangeText={(t) => { setQuery(t); if (!t.trim()) exitSemanticSearch(); }}
               returnKeyType="search"
-              clearButtonMode="while-editing"
+              onSubmitEditing={runSemanticSearch}
+              clearButtonMode="never"
             />
             {query.length > 0 && (
-              <TouchableOpacity onPress={() => setQuery('')} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+              <TouchableOpacity onPress={() => { setQuery(''); exitSemanticSearch(); }} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }} style={{ marginRight: 4 }}>
                 <Ionicons name="close-circle" size={16} color={colors.placeholder} />
               </TouchableOpacity>
             )}
+            <TouchableOpacity
+              onPress={runSemanticSearch}
+              disabled={semanticSearching || !query.trim()}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            >
+              {semanticSearching
+                ? <ActivityIndicator size="small" color={colors.primary} />
+                : <Ionicons name="sparkles-outline" size={17} color={query.trim() ? colors.primary : colors.placeholder} />
+              }
+            </TouchableOpacity>
           </View>
+
+          {semanticResults !== null && (
+            <View style={styles.semanticBanner}>
+              <Ionicons name="sparkles" size={13} color={colors.primary} />
+              <Text style={styles.semanticBannerText} numberOfLines={1}>
+                AI 语义搜索：「{semanticQuery}」· {semanticResults.length} 条结果
+              </Text>
+              <TouchableOpacity onPress={exitSemanticSearch} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                <Ionicons name="close" size={15} color={colors.textTertiary} />
+              </TouchableOpacity>
+            </View>
+          )}
 
           <ScrollView
             horizontal
@@ -286,22 +333,22 @@ export default function StreamScreen() {
 
       <FlatList
         style={styles.list}
-        data={sections}
+        data={semanticResults !== null ? [['AI结果', semanticResults] as [string, typeof semanticResults]] : sections}
         keyExtractor={([date]) => date}
         refreshControl={
-          !selectMode ? (
+          !selectMode && semanticResults === null ? (
             <RefreshControl refreshing={isRefetching} onRefresh={refetch} tintColor={colors.primary} colors={[colors.primary]} />
           ) : undefined
         }
         ListHeaderComponent={
-          !selectMode && !query && !activeTag && onThisDay.length > 0 ? (
+          !selectMode && !query && !activeTag && onThisDay.length > 0 && semanticResults === null ? (
             <OnThisDayCard thoughts={onThisDay} colors={colors} styles={styles} />
           ) : null
         }
         renderItem={({ item: [date, items] }) => (
           <View>
-            <Text style={styles.dateHeader}>{formatDate(date)}</Text>
-            {items.map((thought) => (
+            {date !== 'AI结果' && <Text style={styles.dateHeader}>{formatDate(date)}</Text>}
+            {(items as typeof semanticResults).map((thought) => (
               <ThoughtCard
                 key={thought.id}
                 thought={thought}
@@ -311,6 +358,7 @@ export default function StreamScreen() {
                 onPress={() => selectMode && toggleSelect(thought.id)}
                 colors={colors}
                 styles={styles}
+                score={semanticResults !== null ? (thought as any).score : undefined}
               />
             ))}
           </View>
@@ -466,6 +514,7 @@ function ThoughtCard({
   onPress,
   colors,
   styles,
+  score,
 }: {
   thought: Thought;
   selectMode: boolean;
@@ -474,6 +523,7 @@ function ThoughtCard({
   onPress: () => void;
   colors: ColorScheme;
   styles: ReturnType<typeof makeStyles>;
+  score?: number;
 }) {
   const tags = thought.tags ? thought.tags.split(',').filter(Boolean) : [];
   let imgs: string[] = [];
@@ -513,6 +563,13 @@ function ThoughtCard({
         <View style={styles.cardContent}>
           <View style={styles.cardMeta}>
             <Text style={styles.time}>{dayjs(thought.created_at).format('HH:mm')}</Text>
+            {score !== undefined && (
+              <View style={[styles.scorePill, { backgroundColor: score >= 0.6 ? colors.primaryLight : colors.inputBg }]}>
+                <Text style={[styles.scorePillText, { color: score >= 0.6 ? colors.primary : colors.textTertiary }]}>
+                  {Math.round(score * 100)}%
+                </Text>
+              </View>
+            )}
             {!!thought.emotion && (
               <View style={[styles.emotionDot, { backgroundColor: EMOTION_COLORS[thought.emotion] ?? '#aaa' }]} />
             )}
@@ -742,6 +799,10 @@ function makeStyles(c: ColorScheme) {
     },
     starredChip: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 10 },
     filterChipActive: { backgroundColor: c.primary, borderColor: c.primary },
+    semanticBanner: { flexDirection: 'row', alignItems: 'center', gap: 6, marginHorizontal: 16, marginBottom: 8, backgroundColor: c.primaryLight, borderRadius: 10, paddingHorizontal: 10, paddingVertical: 7 },
+    semanticBannerText: { flex: 1, fontSize: 12, color: c.primary, fontWeight: '500' },
+    scorePill: { borderRadius: 10, paddingHorizontal: 6, paddingVertical: 1 },
+    scorePillText: { fontSize: 10, fontWeight: '600' },
     filterChipText: { fontSize: 13, color: c.textSecondary },
     filterChipTextActive: { color: '#fff', fontWeight: '600' },
     starBtn: { marginLeft: 'auto' },

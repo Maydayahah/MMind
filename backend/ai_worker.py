@@ -149,6 +149,76 @@ def hybrid_search(query: str, user_id: int | None = None, top_k: int = 10) -> li
     return [dict(r) for r in rows]
 
 
+def search_thoughts(query: str, user_id: int | None = None, top_k: int = 20) -> dict:
+    import numpy as np
+
+    conn = get_db()
+    uid_clause = "AND user_id=?" if user_id is not None else ""
+    base_params = (user_id,) if user_id is not None else ()
+
+    # ── 关键词命中 ────────────────────────────────────────────────────────────────
+    keywords = [w for w in query.split() if w.strip()]
+    keyword_ids: set[int] = set()
+    if keywords:
+        like_clauses = " OR ".join(["(content LIKE ? OR tags LIKE ?)"] * len(keywords))
+        like_params = [v for kw in keywords for v in (f"%{kw}%", f"%{kw}%")]
+        rows = conn.execute(
+            f"SELECT id FROM thoughts WHERE ({like_clauses}) {uid_clause} LIMIT 50",
+            (*like_params, *base_params),
+        ).fetchall()
+        keyword_ids = {r["id"] for r in rows}
+
+    # ── 语义检索 ──────────────────────────────────────────────────────────────────
+    scored: list[tuple[int, float]] = []
+    semantic_available = False
+    query_emb = generate_embedding(query)
+    if query_emb is not None:
+        semantic_available = True
+        all_rows = conn.execute(
+            f"SELECT id, embedding FROM thoughts"
+            f" WHERE embedding != '' {uid_clause} ORDER BY created_at DESC LIMIT 500",
+            base_params,
+        ).fetchall()
+        q_vec = np.array(query_emb)
+        for r in all_rows:
+            try:
+                vec = np.array(json.loads(r["embedding"]))
+                scored.append((r["id"], float(np.dot(q_vec, vec))))
+            except Exception:
+                continue
+        scored.sort(key=lambda x: x[1], reverse=True)
+
+    semantic_top = scored[:top_k]
+    semantic_ids = {s[0] for s in semantic_top}
+    score_map: dict[int, float] = {s[0]: s[1] for s in semantic_top}
+
+    combined = semantic_ids | keyword_ids
+    if not combined:
+        conn.close()
+        return {"results": [], "semantic": semantic_available}
+
+    placeholders = ",".join("?" * len(combined))
+    rows = conn.execute(
+        f"SELECT * FROM thoughts WHERE id IN ({placeholders})",
+        list(combined),
+    ).fetchall()
+    conn.close()
+
+    results = []
+    for r in rows:
+        t = dict(r)
+        tid = t["id"]
+        sem_score = score_map.get(tid, 0.0)
+        in_keyword = tid in keyword_ids
+        in_semantic = tid in semantic_ids
+        t["score"] = round(sem_score, 4)
+        t["match_mode"] = "both" if (in_keyword and in_semantic) else ("semantic" if in_semantic else "keyword")
+        results.append(t)
+
+    results.sort(key=lambda x: (x["score"], x["match_mode"] == "both"), reverse=True)
+    return {"results": results[:top_k], "semantic": semantic_available}
+
+
 def chat_with_notes(message: str, history: list[dict], user_id: int | None = None) -> str:
     relevant = hybrid_search(message, user_id)
 
